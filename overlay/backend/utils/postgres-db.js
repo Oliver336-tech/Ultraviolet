@@ -79,7 +79,8 @@ export default class PostgresDatabase {
 
   _query(sql, args, mode) {
     const query = translateSql(sql, args);
-    return this._request({ operation: 'query', ...query, mode });
+    const result = this._request({ operation: 'query', ...query, mode });
+    return mode === 'get' && result === null ? undefined : result;
   }
 
   exec(sql) {

@@ -27,6 +27,7 @@ for (const file of manifest.files) {
 }
 writeFileSync(path.join(app, 'SOURCE_EDITION.json'), JSON.stringify({ upstream, edition: 'ad-free', overlay: process.env.RENDER_GIT_COMMIT || null }, null, 2));
 run('npm', ['ci', '--include=dev'], app);
+run(process.execPath, ['scripts/test-postgres-adapter.mjs'], app);
 run(process.execPath, ['scripts/render-build.mjs'], app);
 // Use an explicit source allowlist. Never include data, uploads, environment
 // secrets, installed packages, compiled artifacts or caches in the source offer.
