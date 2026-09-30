@@ -280,7 +280,13 @@ export function createGameAssetsMiddleware({ fetchImpl = globalThis.fetch } = {}
   async function upstream(asset, method = 'GET', range) {
     const source = GAME_ASSET_SOURCES[asset.source];
     const escaped = asset.file.split('/').map(encodeURIComponent).join('/');
-    const urls = source.origins.map(origin => origin + escaped);
+    // Some CDN edges range a cached compressed representation even when
+    // identity is requested. Prefer the immutable GitHub file endpoint for
+    // byte ranges; keep the existing CDN and fallback order for full files.
+    const origins = range ? source.origins.toSorted((a, b) =>
+      Number(b.startsWith('https://raw.githubusercontent.com/'))
+      - Number(a.startsWith('https://raw.githubusercontent.com/'))) : source.origins;
+    const urls = origins.map(origin => origin + escaped);
     if (source.rawApiBase) urls.unshift(`${source.rawApiBase}${encodeURIComponent(asset.file)}/raw?ref=${source.revision}`);
     let lastStatus = 502;
     for (const url of urls) {

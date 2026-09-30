@@ -64,7 +64,8 @@ for (const f of fixtures) {
       assert.equal(binary.headers.get('content-range'), 'bytes 0-3/100');
       assert.equal(await binary.text(), 'abcd');
       for (let i = 0; i < calls.length; i++) {
-        const prefix = GAME_ASSET_SOURCES[f.source].origins[0];
+        const origins = GAME_ASSET_SOURCES[f.source].origins;
+        const prefix = i === 1 ? (origins.find(origin => origin.startsWith('https://raw.githubusercontent.com/')) || origins[0]) : origins[0];
         assert.ok(calls[i].url.startsWith(prefix), calls[i].url);
         const expectedFile = i === 0 ? f.upstreamScript : f.upstreamData;
         assert.equal(calls[i].url.slice(prefix.length), expectedFile.split('/').map(encodeURIComponent).join('/'));

@@ -82,11 +82,14 @@ test('middleware streams range requests and caches sanitized HTML with correct M
 test('ranged WASM requests serve original bytes rather than a partial compressed representation', async () => {
   const wasm = Buffer.from('0061736d01000000', 'hex');
   const app = express();
-  app.use('/storage/ag', createGameAssetsMiddleware({ fetchImpl: async (_url, options) => {
+  app.use('/storage/ag', createGameAssetsMiddleware({ fetchImpl: async (url, options) => {
     assert.equal(options.headers.Range, 'bytes=0-7');
     // Model a CDN that returns a Brotli representation when compression is
     // negotiated. Such a prefix cannot be decoded into the requested bytes.
-    const identity = options.headers['Accept-Encoding'] === 'identity';
+    // Regional CDN edges may ignore identity for an already cached encoded
+    // variant. GitHub's immutable raw endpoint returns the original byte range.
+    const identity = options.headers['Accept-Encoding'] === 'identity'
+      && url.startsWith('https://raw.githubusercontent.com/PeteZah-Games/Games-lib/1534c55d4771fa93742120c8c0ef29d2ee48f089/');
     return new Response(identity ? wasm : Buffer.from('9bf27723ffa7600c', 'hex'), {
       status: 206,
       headers: { 'content-range': identity ? 'bytes 0-7/2324467' : 'bytes 0-7/1007268', 'accept-ranges': 'bytes' },
