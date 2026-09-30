@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { translateSql } from '../backend/utils/postgres-sql.js';
 import PostgresDatabase from '../backend/utils/postgres-db.js';
+import { postgresConnectionOptions } from '../backend/utils/postgres-tls.js';
 
 const compact = (text) => text.replace(/\s+/g, ' ').trim();
 
@@ -97,4 +98,16 @@ test('async callbacks cannot commit a transaction early', () => {
   const { database, calls } = transactionHarness();
   assert.throws(database.transaction(() => Promise.resolve('later')), /cannot return promises/);
   assert.deepEqual(calls, ['BEGIN', 'ROLLBACK']);
+});
+
+test('verified TLS cannot be weakened or lose its CA through connection URL parameters', () => {
+  const ca = '-----BEGIN CERTIFICATE-----\nverified test CA\n-----END CERTIFICATE-----';
+  const options = postgresConnectionOptions('postgresql://user:password@aws-1-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require&uselibpqcompat=true', true, ca);
+  assert.equal(options.ssl.rejectUnauthorized, true);
+  assert.equal(options.ssl.ca, ca);
+  assert.equal(new URL(options.connectionString).searchParams.has('sslmode'), false);
+  assert.equal(new URL(options.connectionString).searchParams.has('uselibpqcompat'), false);
+  assert.equal(options.ssl.checkServerIdentity, undefined);
+  const ordinary = postgresConnectionOptions('postgresql://user:password@localhost:5432/postgres');
+  assert.deepEqual(ordinary.ssl, { rejectUnauthorized: true });
 });

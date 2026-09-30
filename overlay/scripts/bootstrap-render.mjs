@@ -8,7 +8,8 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const app = path.join(root, 'app');
 const upstream = '819f1fdd0c4b67763973ac3555189f7ca9121155';
 function run(command, args, cwd = root, capture = false) {
-  const result = spawnSync(command, args, { cwd, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', env: process.env });
+  const result = spawnSync(command, args, { cwd, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit',
+    env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=1024' } });
   if (result.status !== 0) throw new Error(`${command} failed (${result.status})${capture ? ': '+result.stderr : ''}`);
   return result.stdout;
 }

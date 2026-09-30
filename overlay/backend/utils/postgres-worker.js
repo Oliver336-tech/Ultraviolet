@@ -1,5 +1,6 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import pg from 'pg';
+import { postgresConnectionOptions } from './postgres-tls.js';
 
 pg.types.setTypeParser(20, (value) => Number(value));
 pg.types.setTypeParser(1700, (value) => Number(value));
@@ -20,8 +21,7 @@ function cleanError(error) {
 async function connect() {
   if (client) return;
   const connection = new pg.Client({
-    connectionString: workerData.connectionString,
-    ssl: workerData.ssl ? { rejectUnauthorized: true } : false,
+    ...postgresConnectionOptions(workerData.connectionString, workerData.ssl),
     connectionTimeoutMillis: 10000,
     statement_timeout: 10000,
     idle_in_transaction_session_timeout: 15000,

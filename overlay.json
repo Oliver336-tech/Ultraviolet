@@ -81,7 +81,12 @@
     "src/main.tsx",
     "src/test/ad-free-popups.test.tsx",
     "supabase/migrations/20260930_petezah_application.sql",
-    "tests/postgres-db.test.mjs"
+    "tests/postgres-db.test.mjs",
+    "backend/legal/documents.js",
+    "backend/legal/pages.js",
+    "backend/legal/version.js",
+    "backend/supabase-ca.crt",
+    "backend/utils/postgres-tls.js"
   ],
   "deleted": [
     "backend/utils/secrets.ts"
