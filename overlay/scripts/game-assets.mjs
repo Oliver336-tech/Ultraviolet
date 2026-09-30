@@ -286,7 +286,10 @@ export function createGameAssetsMiddleware({ fetchImpl = globalThis.fetch } = {}
     for (const url of urls) {
       try {
         const response = await fetchImpl(url, {
-          method, headers: { ...(range ? { Range: range } : {}), 'User-Agent': 'PeteZah-AdFree/1.0' },
+          // Byte ranges must address the original file representation. A CDN
+          // can otherwise range its Brotli/gzip representation, and decoding a
+          // partial compressed stream cannot preserve bytes or Content-Range.
+          method, headers: { ...(range ? { Range: range } : {}), 'Accept-Encoding': 'identity', 'User-Agent': 'PeteZah-AdFree/1.0' },
           signal: AbortSignal.timeout(/\.html?$/i.test(asset.file) ? 60000 : 300000), redirect: 'follow',
         });
         if (response.ok) return response;
