@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // Render's Node runtime serves the app; Mochi is an internal Rust asset proxy.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = { ...process.env };
+const rustCache = process.env.RENDER === 'true'
+  ? path.resolve(root, '../../.cache/petezah-rust')
+  : path.join(root, '.render', 'rust-tools');
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 function run(command, args, options = {}) {
@@ -33,7 +36,7 @@ async function hasCargo() {
 async function ensureRust() {
   env.RUSTUP_TOOLCHAIN ||= env.MOCHI_RUST_TOOLCHAIN || '1.88.0';
   if (await hasCargo()) return;
-  const tools = path.join(root, '.render', 'rust-tools');
+  const tools = rustCache;
   env.CARGO_HOME ||= path.join(tools, 'cargo');
   env.RUSTUP_HOME ||= path.join(tools, 'rustup');
   env.PATH = `${path.join(env.CARGO_HOME, 'bin')}${path.delimiter}${env.PATH || ''}`;
@@ -56,8 +59,14 @@ async function main() {
   env.CARGO_BUILD_JOBS ||= '2';
   env.CARGO_PROFILE_RELEASE_LTO ||= 'thin';
   env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS ||= '8';
+  if (process.env.RENDER === 'true') env.CARGO_TARGET_DIR ||= path.join(rustCache, 'target');
   console.log('[build] Compiling the internal Mochi proxy');
   await run('cargo', ['build', '--locked', '--release', '--manifest-path', 'backend/mochi/Cargo.toml']);
+  if (env.CARGO_TARGET_DIR) {
+    const destination = path.join(root, 'backend/mochi/target/release');
+    mkdirSync(destination, { recursive: true });
+    cpSync(path.join(env.CARGO_TARGET_DIR, 'release/mochi'), path.join(destination, 'mochi'));
+  }
   const firefox = path.join(root, 'public', 'firefox-wasm');
   if (!existsSync(path.join(firefox, 'gecko.wasm.zst')) ||
       !existsSync(path.join(firefox, 'chrome-assets.tar.zst'))) {

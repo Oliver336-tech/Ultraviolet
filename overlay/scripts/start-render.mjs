@@ -47,6 +47,22 @@ async function main() {
     throw new Error('Mochi binary is missing. Run node scripts/render-build.mjs first.');
   }
   mkdirSync(mochiWorkdir, { recursive: true });
+  // Bind the public Render PORT before starting the loopback-only proxy.
+  launch('web server', process.execPath, ['backend/server.js'], {
+    cwd: root,
+    env: { ...process.env, NODE_ENV: 'production', NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-old-space-size=256' },
+  });
+  let webReady = false;
+  const webDeadline = Date.now() + 20000;
+  while (!stopping && Date.now() < webDeadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${process.env.PORT || '3000'}/healthz`, { signal: AbortSignal.timeout(1000) });
+      if (response.ok) { webReady = true; break; }
+    } catch {}
+    await delay(250);
+  }
+  if (stopping) return;
+  if (!webReady) throw new Error('Public web server did not become healthy within 20 seconds.');
   // The existing Node gateway expects Mochi on this exact internal port.
   const mochi = launch('Mochi', mochiBinary, [], {
     cwd: mochiWorkdir,
@@ -77,14 +93,6 @@ async function main() {
   if (!healthy) throw new Error('Mochi did not become healthy within 15 seconds.');
   if (stopping) return;
   console.log('[startup] Internal Mochi proxy is ready');
-  launch('web server', process.execPath, ['backend/server.js'], {
-    cwd: root,
-    env: {
-      ...process.env,
-      NODE_ENV: 'production',
-      NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-old-space-size=256',
-    },
-  });
 }
 
 for (const signal of ['SIGTERM', 'SIGINT']) {

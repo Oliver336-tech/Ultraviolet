@@ -86,7 +86,9 @@
     "backend/legal/pages.js",
     "backend/legal/version.js",
     "backend/supabase-ca.crt",
-    "backend/utils/postgres-tls.js"
+    "backend/utils/postgres-tls.js",
+    "backend/mochi/src/main.rs",
+    "backend/mochi/src/proxy.rs"
   ],
   "deleted": [
     "backend/utils/secrets.ts"
