@@ -192,9 +192,13 @@ const apiLimiter = createApiLimiter(shield);
 const aiLimiter = createAiLimiter(shield);
 
 app.use(createSecurityHeaders());
-app.get('/healthz', (_req, res) => {
+app.get('/healthz', async (_req, res) => {
   try {
     db.prepare('SELECT 1 AS ready').get();
+    if (process.env.MOCHI_MANAGED === 'true') {
+      const proxy = await fetch('http://127.0.0.1:3005/health', { signal: AbortSignal.timeout(1000) });
+      if (!proxy.ok || (await proxy.text()).trim() !== 'ok') throw new Error('Proxy unavailable');
+    }
     res.json({ status: 'ok', edition: 'ad-free', database: process.env.DATABASE_URL ? 'postgres' : 'sqlite' });
   } catch {
     res.status(503).json({ status: 'unavailable' });

@@ -50,19 +50,19 @@ async function main() {
   // Bind the public Render PORT before starting the loopback-only proxy.
   launch('web server', process.execPath, ['backend/server.js'], {
     cwd: root,
-    env: { ...process.env, NODE_ENV: 'production', NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-old-space-size=256' },
+    env: { ...process.env, NODE_ENV: 'production', MOCHI_MANAGED: 'true', NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-old-space-size=256' },
   });
   let webReady = false;
-  const webDeadline = Date.now() + 20000;
+  const webDeadline = Date.now() + 90000;
   while (!stopping && Date.now() < webDeadline) {
     try {
-      const response = await fetch(`http://127.0.0.1:${process.env.PORT || '3000'}/healthz`, { signal: AbortSignal.timeout(1000) });
+      const response = await fetch(`http://127.0.0.1:${process.env.PORT || '3000'}/edition`, { signal: AbortSignal.timeout(1000) });
       if (response.ok) { webReady = true; break; }
     } catch {}
     await delay(250);
   }
   if (stopping) return;
-  if (!webReady) throw new Error('Public web server did not become healthy within 20 seconds.');
+  if (!webReady) throw new Error('Public web server did not start within 90 seconds.');
   // The existing Node gateway expects Mochi on this exact internal port.
   const mochi = launch('Mochi', mochiBinary, [], {
     cwd: mochiWorkdir,
