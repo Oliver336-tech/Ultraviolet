@@ -29,6 +29,30 @@ The offer excludes runtime secrets, accounts, uploads and installed build output
 
 Render build command: `node bootstrap-render.mjs`
 Render start command: `cd app && node scripts/start-render.mjs`
+These commands apply to the deployment branch's overlay checkout.
+
+The `/source.tar.gz` download contains the complete assembled application, so
+it does not require `overlay.json` or the overlay bootstrap step. After extracting
+it, install Node.js 22 or newer and run these commands from its root directory:
+
+```sh
+npm ci --include=dev
+node scripts/render-build.mjs
+node scripts/start-render.mjs
+```
+
+The build script installs the pinned Rust toolchain when necessary, builds Mochi
+with `Cargo.lock`, downloads the Firefox VM assets, and builds the frontend.
+Before starting, set `TOKEN_SECRET` and `SESSION_SECRET` to independently
+generated values of at least 24 characters, and set `ADMIN_EMAIL` to the owner's
+account address. For durable PostgreSQL storage, configure `DATABASE_URL` and a
+database role that can create and use tables in `DATABASE_SCHEMA` (default:
+`petezah`). Connections use TLS by default; a custom CA can be supplied through
+`DATABASE_SSL_CA`. Without `DATABASE_URL`, the backend uses local SQLite storage.
+Configure `PUBLIC_ORIGIN` and any external integrations listed below for your
+deployment. Supply your own credentials; the source download contains none of
+the running deployment's secrets or account data.
+
 The free service uses a private `petezah` schema in an existing Supabase project.
 No passwords or provider keys belong in this repository.
 

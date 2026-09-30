@@ -88,7 +88,9 @@
     "backend/supabase-ca.crt",
     "backend/utils/postgres-tls.js",
     "backend/mochi/src/main.rs",
-    "backend/mochi/src/proxy.rs"
+    "backend/mochi/src/proxy.rs",
+    "backend/middleware/security.js",
+    "scripts/security-trust.test.mjs"
   ],
   "deleted": [
     "backend/utils/secrets.ts"
