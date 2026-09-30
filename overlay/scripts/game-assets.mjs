@@ -49,6 +49,32 @@ export const GAME_ASSET_SOURCES = Object.freeze({
     ],
     attribution: 'gn-math and the individual game authors; per-game notices are preserved.',
   },
+  cg: {
+    repository: 'https://github.com/genizy/cg-rip',
+    revision: '151f9126d2ccb6b81dc0f93155e305900d423d5c',
+    origins: ['https://raw.githubusercontent.com/genizy/cg-rip/151f9126d2ccb6b81dc0f93155e305900d423d5c/'],
+    attribution: 'Game files collected by genizy; copyright remains with the individual game authors. Original notices are preserved.',
+    replacements: 'Same-origin game asset mirror for the unavailable jsDelivr genizy/cg-rip CDN base URLs.',
+  },
+  ports: {
+    repository: 'https://github.com/genizy/web-port',
+    revision: 'a8bea5fd11f88e5a9192857f434e299c40efe7e6',
+    origins: ['https://raw.githubusercontent.com/genizy/web-port/a8bea5fd11f88e5a9192857f434e299c40efe7e6/'],
+    attribution: 'Browser ports collected by genizy; original game and port authors retain their copyrights and notices.',
+    replacements: { 'ultrakill/index.html': 'Use the matching pinned port wrapper; the older Games-lib wrapper refers to build hashes that no longer exist.' },
+  },
+  ugs: {
+    repository: 'https://github.com/bubbls/UGS-Assets',
+    revision: '9cf433220236bb0471ab3a68ec8fe3e0a2799e36',
+    origins: ['https://raw.githubusercontent.com/bubbls/UGS-Assets/9cf433220236bb0471ab3a68ec8fe3e0a2799e36/'],
+    attribution: 'Assets collected by bubbls; copyright remains with individual game authors. Original notices are preserved.',
+  },
+  crushed: {
+    repository: 'https://github.com/the2amgamer/crushed-advendutrs',
+    revision: 'ff28af234aa4a004d09e31f3e37db3fe591fc7e6',
+    origins: ['https://raw.githubusercontent.com/the2amgamer/crushed-advendutrs/ff28af234aa4a004d09e31f3e37db3fe591fc7e6/'],
+    attribution: 'Crushed Adventures files collected by the2amgamer; original game author notices are preserved.',
+  },
 });
 
 const CONTENT_TYPES = {
@@ -104,7 +130,9 @@ export function resolveGameAsset(requestPath) {
     return { source: 'echo', file };
   }
   if (group === 'gn') return { source: 'gn', file };
+  if (['cg', 'ports', 'ugs', 'crushed'].includes(group)) return { source: group, file };
   if (group === 'arsenic' || group === 'originals') {
+    if (file === 'ultrakill/index.html') return { source: 'ports', file: 'ultrakill/index.html' };
     if (group === 'originals' && file.startsWith('precision/')) {
       return { source: 'precision', file: `web/${file.slice('precision/'.length)}` };
     }
@@ -171,8 +199,45 @@ export const AD_FREE_SDK = `(() => {
 const AD_OR_ANALYTICS = /(?:googletagmanager\.com|google-analytics\.com|googlesyndication\.com|doubleclick\.net|adsbygoogle|monetag|adinplay|adsterra|a-ads\.com|plausible\.io|statcounter\.com|googleAnalytics\.js|\/js\/main\.js(?:[?#]|$)|storage\/js\/cloak\.js)/i;
 const SDK_SCRIPT = /(?:sdk\.poki\.com|poki-sdk[^/]*\.js|sdk\.crazygames\.com|crazygames-sdk[^/]*\.js|IronSourceRV\.js|cpmstar\.js|ima3\.js|adblockManager\.js)/i;
 
+// These game pages were copied with external <base> elements. The site's
+// base-uri 'self' policy rejects them, and jsDelivr no longer serves genizy's
+// repositories. Mirror only these known libraries, with the CG source pinned
+// above, so every relative script/fetch/CSS URL keeps the same origin and MIME.
+export function rewriteGameBaseUrls(input, asset = {}) {
+  return input.replace(/(<base\b[^>]*\bhref\s*=\s*)(["'])([^"']+)\2/gi, (whole, before, quote, href) => {
+    let url;
+    try { url = new URL(href, 'https://game-assets.invalid'); } catch { return whole; }
+    if (url.protocol !== 'https:') return whole;
+    const localGame = asset.source === 'petezah' ? asset.file?.split('/')[0] : null;
+    if ((localGame === 'bowmasters' && url.hostname === 'rawcdn.githack.com'
+      && url.pathname === '/bubbls/youtube-playables/main/bowmasters/')
+      || (localGame === 'tiny-fishing' && url.hostname === 'm.coolmathgames.com'
+      && url.pathname === '/sites/default/files/public_games/33145/')) {
+      return `${before}${quote}/storage/ag/arsenic/${localGame}/${quote}`;
+    }
+    if (url.hostname !== 'cdn.jsdelivr.net') return whole;
+    const mirrors = [
+      ['cg', /^\/gh\/genizy\/cg-rip@[^/]+\/(.*)$/],
+      ['ports', /^\/gh\/genizy\/web-port@[^/]+\/(.*)$/],
+      ['ugs', /^\/gh\/bubbls\/UGS-Assets@[^/]+\/(.*)$/],
+      ['crushed', /^\/gh\/the2amgamer\/crushed-advendutrs(?:@[^/]+)?\/(.*)$/],
+    ];
+    for (const [source, pattern] of mirrors) {
+      const match = url.pathname.match(pattern);
+      if (match) return `${before}${quote}/storage/ag/${source}/${match[1]}${quote}`;
+    }
+    if (localGame === 'drive-mad'
+      && /^\/gh\/genizy\/dmad-poki@[^/]+\/$/.test(url.pathname)) {
+      // This deleted repository's complete webapp is already included in the
+      // pinned PeteZah Games-lib source; retain its existing relative layout.
+      return `${before}${quote}/storage/ag/arsenic/drive-mad/${quote}`;
+    }
+    return whole;
+  });
+}
+
 export function sanitizeGameHtml(input, asset = {}) {
-  let output = input.replace(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi, (whole, attributes, body) => {
+  let output = rewriteGameBaseUrls(input, asset).replace(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi, (whole, attributes, body) => {
     const src = attributes.match(/\bsrc\s*=\s*(['"])(.*?)\1/i)?.[2] || '';
     if (SDK_SCRIPT.test(src)) return '<script src="/storage/ag/sdk/ad-free.js"></script>';
     if (AD_OR_ANALYTICS.test(src) || /\bgtag\s*\(|\bga\s*\(\s*['"](?:create|send)|\badsbygoogle\b/.test(body)) return '';
@@ -253,7 +318,9 @@ export function createGameAssetsMiddleware({ fetchImpl = globalThis.fetch } = {}
     const type = gameAssetContentType(asset.file);
     const cacheKey = `${asset.source}/${asset.file}`;
     res.setHeader('Content-Type', type);
-    res.setHeader('Cache-Control', type.startsWith('text/html') ? 'public, max-age=300' : 'public, max-age=86400, stale-while-revalidate=604800');
+    // HTML contains the current compatibility fixes and source routes. Keep
+    // server-side caching, but revalidate browser copies after a deployment.
+    res.setHeader('Cache-Control', type.startsWith('text/html') ? 'no-cache, max-age=0, must-revalidate' : 'public, max-age=86400, stale-while-revalidate=604800');
     res.setHeader('X-Game-Source', GAME_ASSET_SOURCES[asset.source].repository);
     try {
       if (type.startsWith('text/html')) {

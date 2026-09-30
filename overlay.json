@@ -90,7 +90,18 @@
     "backend/mochi/src/main.rs",
     "backend/mochi/src/proxy.rs",
     "backend/middleware/security.js",
-    "scripts/security-trust.test.mjs"
+    "scripts/security-trust.test.mjs",
+    "backend/middleware/cap-gate.js",
+    "backend/mochi/src/constants.rs",
+    "backend/mochi/src/cover.rs",
+    "backend/mochi/src/helpers.rs",
+    "backend/mochi/src/rewrite.rs",
+    "backend/mochi/src/websocket.rs",
+    "scripts/game-security.test.mjs",
+    "scripts/verify-page.test.mjs",
+    "src/components/AppViewerPage.tsx",
+    "src/components/GameViewerPage.tsx",
+    "src/test/game-viewer-launch.test.tsx"
   ],
   "deleted": [
     "backend/utils/secrets.ts"

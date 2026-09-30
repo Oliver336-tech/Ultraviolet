@@ -20,7 +20,7 @@ use crate::cover::handle_cover_request;
 use crate::encoding::decode_mochi_url;
 use crate::helpers::{
     fix_game_content_type, get_cdn_cache_control, is_blacklisted_header, is_blacklisted_res_header,
-    is_blocked_target, is_likely_static_asset_fast, is_streaming_media,
+    is_blocked_target, is_likely_static_asset_fast, is_streaming_media, sanitize_upstream_header,
 };
 use crate::rewrite::{rewrite_css_urls, rewrite_html};
 use crate::state::{AppState, CachedResponse};
@@ -51,9 +51,78 @@ fn split_proxy_path(path_and_query: &str) -> Option<(&'static str, &str)> {
     None
 }
 
+// The browser-facing paths use hs/ and ht/, while Express translates incoming
+// requests to full URLs. Referer headers retain the browser-facing path and may
+// also use a different proxy prefix, so decode them independently of this
+// request's prefix.
+fn decode_proxy_target(raw_target: &str) -> Option<(String, Option<String>)> {
+    if raw_target.starts_with("http://") || raw_target.starts_with("https://") {
+        return Some((Url::parse(raw_target).ok()?.to_string(), None));
+    }
+    for (alias, scheme) in [("hs/", "https://"), ("ht/", "http://")] {
+        if let Some(rest) = raw_target.strip_prefix(alias) {
+            return Some((Url::parse(&format!("{scheme}{rest}")).ok()?.to_string(), None));
+        }
+    }
+    let (token, remainder) = raw_target.split_once('/').unwrap_or((raw_target, ""));
+    let decoded = decode_mochi_url(token)?;
+    let remainder = remainder
+        .strip_prefix("!a!")
+        .or_else(|| remainder.strip_prefix("a/"))
+        .unwrap_or(remainder);
+    let target = if remainder.is_empty() {
+        decoded
+    } else {
+        let mut base = Url::parse(&decoded).ok()?;
+        if !base.path().ends_with('/')
+            && !base.path().rsplit('/').next().unwrap_or("").contains('.')
+        {
+            let directory = format!("{}/", base.path());
+            base.set_path(&directory);
+        }
+        base.join(remainder).ok()?.to_string()
+    };
+    Some((target, Some(token.to_string())))
+}
+
+fn upstream_referer(headers: &HeaderMap) -> Option<Url> {
+    let referer = Url::parse(headers.get("referer")?.to_str().ok()?).ok()?;
+    let mut path = referer.path().to_string();
+    if let Some(query) = referer.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+    let (_, raw_target) = split_proxy_path(&path)?;
+    let (target, _) = decode_proxy_target(raw_target)?;
+    Url::parse(&target).ok()
+}
+
+fn resolve_relative_target(raw_target: &str, headers: &HeaderMap) -> Option<String> {
+    // Join the upstream relative resource, never the local /f/g/ or /!!/ path.
+    // This is essential for Unity loaders requesting TemplateData/... and
+    // Build/... dynamically rather than through a static HTML attribute.
+    if let Some(base) = upstream_referer(headers) {
+        return base.join(raw_target).ok().map(|url| url.to_string());
+    }
+    let cookies = headers.get("cookie")?.to_str().ok()?;
+    for cookie in cookies.split(';').map(str::trim) {
+        if let Some(token) = cookie.strip_prefix("nmb=").or_else(|| cookie.strip_prefix("mochi_base=")) {
+            if let Some(decoded) = decode_mochi_url(token) {
+                if let Ok(base) = Url::parse(&decoded) {
+                    return base.join(raw_target).ok().map(|url| url.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod path_tests {
-    use super::split_proxy_path;
+    use super::{apply_common_request_headers, decode_proxy_target, resolve_relative_target, split_proxy_path};
+    use axum::http::{HeaderMap, HeaderValue};
+    use base64::Engine as _;
+    use crate::encoding::encode_mochi_url;
 
     #[test]
     fn rejects_probe_and_unknown_paths_without_slicing() {
@@ -77,6 +146,86 @@ mod path_tests {
         assert_eq!(split_proxy_path("/f/g/é/🦊?q=λ"), Some(("/f/g/", "é/🦊?q=λ")));
         let (_, malformed) = split_proxy_path("/f/g/http://[").unwrap();
         assert!(url::Url::parse(malformed).is_err());
+    }
+
+    #[test]
+    fn unity_relative_resources_use_public_alias_referer() {
+        for public_prefix in ["/f/g/", "/n/m/", "/!!/"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("referer", HeaderValue::from_str(&format!(
+                "https://games.example{public_prefix}hs/cdn.example/unity/game/index.html"
+            )).unwrap());
+            assert_eq!(resolve_relative_target("TemplateData/y8-logo.png", &headers).as_deref(),
+                Some("https://cdn.example/unity/game/TemplateData/y8-logo.png"));
+            assert_eq!(resolve_relative_target("Build/game.loader.js?v=2", &headers).as_deref(),
+                Some("https://cdn.example/unity/game/Build/game.loader.js?v=2"));
+            assert_eq!(resolve_relative_target("/assets/root.png", &headers).as_deref(),
+                Some("https://cdn.example/assets/root.png"));
+        }
+    }
+
+    #[test]
+    fn encoded_referer_suffix_and_cookie_keep_upstream_directory() {
+        let token = encode_mochi_url("https://cdn.example/unity/");
+        let mut headers = HeaderMap::new();
+        headers.insert("referer", HeaderValue::from_str(&format!(
+            "https://games.example/f/g/{token}/game/index.html?quality=high"
+        )).unwrap());
+        // Another iframe's cookie must not override this document's referer.
+        headers.insert("cookie", HeaderValue::from_str(&format!(
+            "nmb={}", encode_mochi_url("https://other.example/other/index.html")
+        )).unwrap());
+        assert_eq!(resolve_relative_target("../Build/game.wasm", &headers).as_deref(),
+            Some("https://cdn.example/unity/Build/game.wasm"));
+        headers.remove("referer");
+        assert_eq!(resolve_relative_target("TemplateData/y8-logo.png", &headers).as_deref(),
+            Some("https://other.example/other/TemplateData/y8-logo.png"));
+    }
+
+    #[test]
+    fn explicit_targets_and_encoded_root_assets_stay_absolute() {
+        let token = encode_mochi_url("https://cdn.example/game/index.html");
+        assert_eq!(decode_proxy_target(&format!("{token}/a//assets/sound.ogg?x=1")).unwrap().0,
+            "https://cdn.example/assets/sound.ogg?x=1");
+        assert_eq!(decode_proxy_target("https://other.example/loader.js").unwrap().0,
+            "https://other.example/loader.js");
+        assert_eq!(decode_proxy_target("ht/cdn.example/game/loader.js").unwrap().0,
+            "http://cdn.example/game/loader.js");
+        assert_eq!(resolve_relative_target("TemplateData/y8-logo.png", &HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn outbound_requests_remove_application_credentials_and_keep_provider_cookie() {
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            br#"{"iat":1700000000000,"exp":1700003600000,"features":{"http":true,"ws":true},"fp":"0123456789abcdef"}"#
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", HeaderValue::from_str(&format!("Bearer {payload}.{}", "A".repeat(43))).unwrap());
+        headers.insert("cookie", HeaderValue::from_static(
+            "pz.sid=private-session; pz_gate=private-gate; pz_legal=private-legal; bot_token=private-token; nmb=proxy-base; mochi_base=proxy-base; nmt_legacy=proxy-base; __nmt_route=proxy-base; provider_session=keep-me; bot_tokenized=keep-too"
+        ));
+        let target = url::Url::parse("https://provider.example/game/loader.js").unwrap();
+        let client = reqwest::Client::new();
+        let request = apply_common_request_headers(client.get(target.clone()), &headers, &target, true, false).build().unwrap();
+        assert!(!request.headers().contains_key("authorization"));
+        assert_eq!(request.headers().get("cookie").unwrap(), "provider_session=keep-me; bot_tokenized=keep-too");
+        headers.insert("cookie", HeaderValue::from_static("pz.sid=private-session; bot_token=private-token"));
+        let request = apply_common_request_headers(client.get(target.clone()), &headers, &target, false, false).build().unwrap();
+        assert!(!request.headers().contains_key("cookie"));
+    }
+
+    #[test]
+    fn outbound_requests_preserve_remote_basic_jwt_and_opaque_bearer_auth() {
+        let target = url::Url::parse("https://provider.example/game/").unwrap();
+        let client = reqwest::Client::new();
+        for authorization in ["Basic dXNlcjpwYXNz", "Bearer header.payload.signature", "Bearer opaque-remote-token"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("authorization", HeaderValue::from_str(authorization).unwrap());
+            headers.insert("cookie", HeaderValue::from_static("remote_session=keep; theme=dark"));
+            let request = apply_common_request_headers(client.get(target.clone()), &headers, &target, false, true).build().unwrap();
+            assert_eq!(request.headers().get("authorization").unwrap(), authorization);
+            assert_eq!(request.headers().get("cookie").unwrap(), "remote_session=keep; theme=dark");
+        }
     }
 }
 
@@ -121,7 +270,9 @@ fn apply_common_request_headers(
             if !is_likely_asset && key_str == "accept-encoding" {
                 continue;
             }
-            req_builder = req_builder.header(k, v);
+            if let Some(safe_value) = sanitize_upstream_header(key_str, v) {
+                req_builder = req_builder.header(k, safe_value);
+            }
         }
     }
     req_builder = req_builder.header("User-Agent", UA);
@@ -159,7 +310,6 @@ pub async fn proxy_handler(
     req_body: Bytes,
 ) -> Response {
     let mut valid_token: Option<String> = None;
-    let original_uri = uri.path_and_query().map(|p| p.as_str()).unwrap_or("");
     let path_and_query = uri.path_and_query().map(|p| p.as_str()).unwrap_or("");
     let (prefix, raw_target) = match split_proxy_path(path_and_query) {
         Some(parts) => parts,
@@ -167,81 +317,11 @@ pub async fn proxy_handler(
     };
     let is_cover_request = prefix == constants::COVER_PREFIX
         || prefix == constants::COVER_PREFIX_LEGACY;
-    let decoded_target_owned = if !raw_target.starts_with("http")
-        && !raw_target.starts_with("ws")
-        && !raw_target.is_empty()
-    {
-        let clean = raw_target.trim_end_matches('/');
-        let (token, mut remainder) = clean.split_once('/').unwrap_or((clean, ""));
-
-        if remainder.starts_with("!a!") {
-            remainder = remainder.trim_start_matches("!a!");
-        } else if remainder.starts_with("a/") {
-            remainder = remainder.trim_start_matches("a/");
-        }
-
-        if let Some(decoded_base) = decode_mochi_url(token) {
-            valid_token = Some(token.to_string());
-
-            if remainder.is_empty() {
-                decoded_base
-            } else {
-                let mut base_for_join = decoded_base.clone();
-                if !base_for_join.ends_with('/')
-                    && !base_for_join.split('?').next().unwrap_or("").split('/').last().unwrap_or("").contains('.')
-                {
-                    base_for_join.push('/');
-                }
-
-                match url::Url::parse(&base_for_join) {
-                    Ok(base) => base
-                        .join(remainder)
-                        .map(|u| u.to_string())
-                        .unwrap_or_else(|_| {
-                            format!("{}/{}", base_for_join.trim_end_matches('/'), remainder)
-                        }),
-                    Err(_) => {
-                        format!("{}/{}", base_for_join.trim_end_matches('/'), remainder)
-                    }
-                }
-            }
-        } else {
-            let mut fallback_target = raw_target.to_string();
-
-            if let Some(referer) = headers.get("referer").and_then(|v| v.to_str().ok()) {
-                if let Some(referer_target) = referer.split(prefix).nth(1) {
-                    let referer_clean = referer_target.trim_end_matches('/');
-                    let (ref_token, _) =
-                        referer_clean.split_once('/').unwrap_or((referer_clean, ""));
-                    if let Some(ref_decoded_base) = decode_mochi_url(ref_token) {
-                        if let Ok(ref_url) = url::Url::parse(&ref_decoded_base) {
-                            if let Ok(resolved) = ref_url.join(original_uri) {
-                                fallback_target = resolved.to_string();
-                            }
-                        }
-                    }
-                }
-            }
-
-            if fallback_target == raw_target {
-                if let Some(cookie_hdr) = headers.get("cookie").and_then(|c| c.to_str().ok()) {
-                    for cookie in cookie_hdr.split(';') {
-                        let cookie = cookie.trim();
-                        if let Some(base_token) = cookie.strip_prefix("nmb=").or_else(|| cookie.strip_prefix("mochi_base=")) {
-                            if let Some(ref_decoded_base) = decode_mochi_url(base_token) {
-                                if let Ok(ref_url) = Url::parse(&ref_decoded_base) {
-                                    if let Ok(resolved) = ref_url.join(original_uri) {
-                                        fallback_target = resolved.to_string();
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            fallback_target
-        }
+    let decoded_target_owned = if let Some((target, token)) = decode_proxy_target(raw_target) {
+        valid_token = token;
+        target
+    } else if !raw_target.starts_with("http") && !raw_target.starts_with("ws") {
+        resolve_relative_target(raw_target, &headers).unwrap_or_else(|| raw_target.to_string())
     } else {
         raw_target.to_string()
     };

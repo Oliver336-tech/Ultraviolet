@@ -384,6 +384,7 @@
     let solved = false;
     let busy = false;
     let legalVersion = null;
+    let captchaRequired = true;
 
     function sync() {
       btn.disabled = busy || !solved || !agree.checked;
@@ -392,21 +393,28 @@
     async function refreshStatus() {
       try {
         const r = await fetch("/api/legal/status", { credentials: "include" });
+        if (!r.ok) throw new Error("Verification status unavailable");
         const d = await r.json();
         legalVersion = d.version || null;
-        if (d.gate) solved = true;
-        if (d.gate && d.accepted) {
+        captchaRequired = d.needsCaptcha !== false && !d.gate;
+        solved = !captchaRequired;
+        el.closest(".widget-wrap").style.display = captchaRequired ? "" : "none";
+        if (solved && d.accepted) {
           status.textContent = "You're in — redirecting…";
           status.className = "status ok";
           location.replace("/");
           return;
         }
-        if (d.gate && !d.accepted) {
+        if (solved && !d.accepted) {
           status.textContent = "Verified. Accept the policies to continue.";
           status.className = "status";
         }
         sync();
-      } catch {}
+      } catch {
+        status.textContent = "Could not check verification. Refresh to try again.";
+        status.className = "status err";
+        sync();
+      }
     }
 
     async function continueOn() {
@@ -453,6 +461,7 @@
       sync();
     });
     el.addEventListener("error", (e) => {
+      if (!captchaRequired) return;
       solved = false;
       status.textContent = e.detail?.message || "Verification failed. Please try again.";
       status.className = "status err";

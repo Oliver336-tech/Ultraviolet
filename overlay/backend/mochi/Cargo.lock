@@ -1163,6 +1163,7 @@ dependencies = [
  "mimalloc",
  "moka",
  "reqwest",
+ "serde_json",
  "sysinfo",
  "tokio",
  "tokio-stream",
