@@ -75,6 +75,13 @@ export const GAME_ASSET_SOURCES = Object.freeze({
     origins: ['https://raw.githubusercontent.com/the2amgamer/crushed-advendutrs/ff28af234aa4a004d09e31f3e37db3fe591fc7e6/'],
     attribution: 'Crushed Adventures files collected by the2amgamer; original game author notices are preserved.',
   },
+  hit: {
+    repository: 'https://github.com/Collasperz/ragdoll-hit',
+    revision: 'a2c2be028d5d4f97ad30cff9b3fc656b26bf85b9',
+    origins: ['https://raw.githubusercontent.com/Collasperz/ragdoll-hit/a2c2be028d5d4f97ad30cff9b3fc656b26bf85b9/'],
+    attribution: 'Ragdoll Hit by Ericetto; files collected by Collasperz. Original game author notices are preserved.',
+    replacements: { 'ragdoll-hit': 'Games-lib contains the wrapper but omits its Unity Build files. Serve the complete matching pinned source.' },
+  },
 });
 
 const CONTENT_TYPES = {
@@ -104,7 +111,8 @@ const ECHO_ENTRYPOINTS = Object.freeze({
 });
 
 export function gameAssetContentType(file) {
-  return CONTENT_TYPES[path.posix.extname(file.replace(/\.(gz|br)$/i, '')).toLowerCase()] || 'application/octet-stream';
+  const unwrapped = file.replace(/\.(gz|br)$/i, '').replace(/\.unityweb$/i, '');
+  return CONTENT_TYPES[path.posix.extname(unwrapped).toLowerCase()] || 'application/octet-stream';
 }
 
 export function resolveGameAsset(requestPath) {
@@ -130,8 +138,9 @@ export function resolveGameAsset(requestPath) {
     return { source: 'echo', file };
   }
   if (group === 'gn') return { source: 'gn', file };
-  if (['cg', 'ports', 'ugs', 'crushed'].includes(group)) return { source: group, file };
+  if (['cg', 'ports', 'ugs', 'crushed', 'hit'].includes(group)) return { source: group, file };
   if (group === 'arsenic' || group === 'originals') {
+    if (file.startsWith('ragdoll-hit/')) return { source: 'hit', file: file.slice('ragdoll-hit/'.length) };
     if (file === 'ultrakill/index.html') return { source: 'ports', file: 'ultrakill/index.html' };
     if (group === 'originals' && file.startsWith('precision/')) {
       return { source: 'precision', file: `web/${file.slice('precision/'.length)}` };
@@ -144,6 +153,8 @@ export function resolveGameAsset(requestPath) {
 
 // These public SDKs normally request ad networks. Keep the game-facing callbacks
 // so commercial/rewarded break calls finish without displaying advertisements.
+const SDK_SCRIPT = /(?:sdk\.poki\.com|poki-sdk[^/]*\.js|sdk\.crazygames\.com|crazygames-sdk[^/]*\.js|IronSourceRV\.js|cpmstar\.js|ima3\.js|adblockManager\.js)/i;
+export const GAME_SDK_URL = '/storage/ag/sdk/ad-free.js?v=2';
 export const AD_FREE_SDK = `(() => {
   if (window.__pzAdFreeSdk) return;
   window.__pzAdFreeSdk = true;
@@ -153,7 +164,9 @@ export const AD_FREE_SDK = `(() => {
     init: done, initWithVideoHB: done, commercialBreak: done,
     rewardedBreak: () => Promise.resolve(true), getLeaderboard: () => Promise.resolve([]),
     getSharableURL: () => Promise.resolve(location.href),
+    shareableURL: () => Promise.resolve(location.href),
     getURLParam: key => new URLSearchParams(location.search).get(key) || '',
+    getLanguage: () => (navigator.language || 'en').toLowerCase().split('-')[0],
     displayAd: noop, destroyAd: noop, isAdBlocked: () => true,
   };
   window.PokiSDK = new Proxy(poki, { get: (target, key) => key in target ? target[key] : noop });
@@ -181,23 +194,92 @@ export const AD_FREE_SDK = `(() => {
   // Game assets, multiplayer connections and other public resources are untouched.
   const blocked = /(?:googletagmanager\\.com|google-analytics\\.com|googlesyndication\\.com|doubleclick\\.net|cpmstar\\.com|ultra-rv\\.com|monetag|adinplay|adsterra|a-ads\\.com|adsbygoogle)/i;
   const rejects = url => blocked.test(String(url || ''));
+  // Some game bootstraps append their SDK dynamically, then start the engine
+  // from the script's load callback. Loading the real SDK would overwrite the
+  // shim and wait on advertising hosts again. Serve the shim as an ordinary
+  // same-origin script so the browser still delivers the real load event.
+  const sdkScripts = /${SDK_SCRIPT.source}/i;
+  const localSdk = '${GAME_SDK_URL}';
+  const sdkNodes = new WeakSet();
+  const rewriteAssetUrl = raw => {
+    try {
+      const url = new URL(String(raw), document.baseURI);
+      const prefix = '/gh/Collasperz/ragdoll-hit/';
+      if (url.protocol === 'https:' && url.hostname === 'cdn.jsdelivr.net' && url.pathname.startsWith(prefix)) {
+        // The game's existing/cached Unity loader hardcodes this mutable CDN.
+        // Its build is absent from Games-lib; use the matching pinned mirror.
+        return location.origin + '/storage/ag/arsenic/ragdoll-hit/' + url.pathname.slice(prefix.length) + url.search + url.hash;
+      }
+    } catch {}
+    return raw;
+  };
+  const setAttribute = Element.prototype.setAttribute;
+  const isSdkScript = (node, value) => node?.tagName === 'SCRIPT' && sdkScripts.test(String(value || ''));
+  const rewriteScript = node => {
+    if (isSdkScript(node, node?.src) || sdkNodes.has(node)) {
+      sdkNodes.add(node);
+      node.removeAttribute('integrity');
+      setAttribute.call(node, 'src', localSdk);
+    } else if (node?.tagName === 'SCRIPT') {
+      const next = rewriteAssetUrl(node.src);
+      if (next !== node.src) setAttribute.call(node, 'src', next);
+    }
+  };
+  const scriptSrc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
+  if (scriptSrc?.get && scriptSrc.set && scriptSrc.configurable) {
+    Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+      ...scriptSrc,
+      set(value) {
+        if (isSdkScript(this, value)) {
+          sdkNodes.add(this);
+          this.removeAttribute('integrity');
+          return scriptSrc.set.call(this, localSdk);
+        }
+        return scriptSrc.set.call(this, rewriteAssetUrl(value));
+      },
+    });
+  }
+  Element.prototype.setAttribute = function(name, value) {
+    if (String(name).toLowerCase() === 'src' && isSdkScript(this, value)) {
+      sdkNodes.add(this);
+      this.removeAttribute('integrity');
+      return setAttribute.call(this, name, localSdk);
+    }
+    return setAttribute.call(this, name, String(name).toLowerCase() === 'src' ? rewriteAssetUrl(value) : value);
+  };
   const originalFetch = window.fetch?.bind(window);
-  if (originalFetch) window.fetch = (input, init) => rejects(input?.url || input)
-    ? Promise.resolve(new Response(null, { status: 204 })) : originalFetch(input, init);
+  if (originalFetch) window.fetch = (input, init) => {
+    const raw = input?.url || input;
+    if (rejects(raw)) return Promise.resolve(new Response(null, { status: 204 }));
+    const next = rewriteAssetUrl(raw);
+    return originalFetch(next === raw ? input : input instanceof Request ? new Request(next, input) : next, init);
+  };
+  const xhrOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, ...args) {
+    return xhrOpen.call(this, method, rewriteAssetUrl(url), ...args);
+  };
   const append = Node.prototype.appendChild;
   Node.prototype.appendChild = function(node) {
+    rewriteScript(node);
     if (rejects(node?.src || node?.href)) return node;
     return append.call(this, node);
   };
   const insert = Node.prototype.insertBefore;
   Node.prototype.insertBefore = function(node, reference) {
+    rewriteScript(node);
     if (rejects(node?.src || node?.href)) return node;
     return insert.call(this, node, reference);
   };
+  for (const method of ['append', 'prepend']) {
+    const original = Element.prototype[method];
+    Element.prototype[method] = function(...nodes) {
+      for (const node of nodes) rewriteScript(node);
+      return original.apply(this, nodes.filter(node => !rejects(node?.src || node?.href)));
+    };
+  }
 })();`;
 
 const AD_OR_ANALYTICS = /(?:googletagmanager\.com|google-analytics\.com|googlesyndication\.com|doubleclick\.net|adsbygoogle|monetag|adinplay|adsterra|a-ads\.com|plausible\.io|statcounter\.com|googleAnalytics\.js|\/js\/main\.js(?:[?#]|$)|storage\/js\/cloak\.js)/i;
-const SDK_SCRIPT = /(?:sdk\.poki\.com|poki-sdk[^/]*\.js|sdk\.crazygames\.com|crazygames-sdk[^/]*\.js|IronSourceRV\.js|cpmstar\.js|ima3\.js|adblockManager\.js)/i;
 
 // These game pages were copied with external <base> elements. The site's
 // base-uri 'self' policy rejects them, and jsDelivr no longer serves genizy's
@@ -239,7 +321,7 @@ export function rewriteGameBaseUrls(input, asset = {}) {
 export function sanitizeGameHtml(input, asset = {}) {
   let output = rewriteGameBaseUrls(input, asset).replace(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi, (whole, attributes, body) => {
     const src = attributes.match(/\bsrc\s*=\s*(['"])(.*?)\1/i)?.[2] || '';
-    if (SDK_SCRIPT.test(src)) return '<script src="/storage/ag/sdk/ad-free.js"></script>';
+    if (SDK_SCRIPT.test(src)) return '<script src="' + GAME_SDK_URL + '"></script>';
     if (AD_OR_ANALYTICS.test(src) || /\bgtag\s*\(|\bga\s*\(\s*['"](?:create|send)|\badsbygoogle\b/.test(body)) return '';
     if (/\.cpmstar\.com\/cached\/zonefiles/.test(body)) return '';
     // Known gn-math ad-loader fingerprint: creates random DOM ad probes and
@@ -251,7 +333,7 @@ export function sanitizeGameHtml(input, asset = {}) {
   if (asset.source === 'echo' && asset.file?.startsWith('geodashlite/')) {
     output = output.replace(/(["'])\/(themes|rs)\//g, '$1/storage/ag/echo/geodashlite/$2/');
   }
-  const bootstrap = '<script src="/storage/ag/sdk/ad-free.js"></script><style>ins.adsbygoogle,.adsbox,[id^="div-gpt-ad"]{display:none!important}</style>';
+  const bootstrap = '<script src="' + GAME_SDK_URL + '"></script><style>ins.adsbygoogle,.adsbox,[id^="div-gpt-ad"]{display:none!important}</style>';
   if (/<head\b[^>]*>/i.test(output)) return output.replace(/<head\b[^>]*>/i, match => match + bootstrap);
   if (/<!doctype[^>]*>/i.test(output)) return output.replace(/<!doctype[^>]*>/i, match => match + bootstrap);
   return bootstrap + output;

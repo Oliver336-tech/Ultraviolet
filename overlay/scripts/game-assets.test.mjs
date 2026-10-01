@@ -10,7 +10,7 @@ test('catalog game URLs map to library files, including renamed entrypoints', as
   const { games } = JSON.parse(await readFile(new URL('../public/storage/data/collection.json', import.meta.url)));
   const local = games.map(game => new URL(game.url, 'https://example.test').searchParams.get('url'))
     .filter(url => url?.startsWith('/storage/ag/'));
-  assert.equal(local.length, 445);
+  assert.equal(local.length, 444);
   for (const url of local) {
     if (url === '/storage/ag/apps/geforce/index.html') continue;
     assert.ok(resolveGameAsset(url), `Missing mapping: ${url}`);

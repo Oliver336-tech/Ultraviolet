@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { pxCreateFrame, pxEncode, pxReady } from "@/lib/px";
 import { armPx } from "@/lib/browserInit";
 import { applyMuxForUrl } from "@/lib/proxyTarget";
@@ -177,6 +177,16 @@ function makeNewTabEntry(spaceId: string): Tab {
 }
 
 export function useBrowserState() {
+  const navigationRequests = useRef(new Map<string, symbol>());
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      navigationRequests.current.clear();
+    };
+  }, []);
+
   const [spaces] = useState<Space[]>(DEFAULT_SPACES);
   const [activeSpaceId] = useState("main");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -206,37 +216,37 @@ export function useBrowserState() {
         !!targetUrl &&
         !targetUrl.startsWith("petezah://") &&
         targetUrl !== "about:blank";
-      if (needsEngine && !pxReady()) {
-        armPx().catch(() => {});
-      }
       const newTab = createTab(targetUrl, activeSpaceId);
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(newTab.id);
       if (needsEngine && !newTab.frame) {
         const id = newTab.id;
-        const start = Date.now();
-        const iv = setInterval(() => {
-          if (!pxReady()) {
-            if (Date.now() - start > 15000) clearInterval(iv);
-            return;
-          }
-          clearInterval(iv);
-          const frame = makeProxyFrame(targetUrl);
-          if (!frame) return;
-          frame.addEventListener?.("urlchange", (e: any) => {
-            const newUrl = e?.url || e?.detail?.url || "";
-            if (newUrl && newUrl.startsWith("http")) {
-              window.dispatchEvent(
-                new CustomEvent("petezah-url-change", {
-                  detail: { tabId: id, url: newUrl },
-                })
-              );
-            }
+        const request = Symbol();
+        navigationRequests.current.set(id, request);
+        const isCurrent = () => mounted.current && navigationRequests.current.get(id) === request;
+        void armPx().then(() => {
+          if (!isCurrent()) return;
+          setTabs((prev) => {
+            if (!isCurrent()) return prev;
+            return prev.map((t) => {
+              if (t.id !== id || t.frame || t.url !== targetUrl) return t;
+              const frame = makeProxyFrame(targetUrl);
+              if (!frame) return t;
+              frame.addEventListener?.("urlchange", (e: any) => {
+                const newUrl = e?.url || e?.detail?.url || "";
+                if (newUrl && newUrl.startsWith("http")) {
+                  window.dispatchEvent(new CustomEvent("petezah-url-change", {
+                    detail: { tabId: id, url: newUrl },
+                  }));
+                }
+              });
+              return { ...t, frame };
+            });
           });
-          setTabs((prev) =>
-            prev.map((t) => (t.id === id && !t.frame ? { ...t, frame } : t))
-          );
-        }, 100);
+        }).catch(() => {
+          if (!isCurrent()) return;
+          toast({ title: "Couldn't open page", description: "The connection couldn't start. Please try again." });
+        });
       }
       return newTab;
     },
@@ -245,6 +255,7 @@ export function useBrowserState() {
 
   const closeTab = useCallback(
     (id: string) => {
+      navigationRequests.current.delete(id);
       setTabs((prev) => {
         const tab = prev.find((t) => t.id === id);
         if (tab?.frame) {
@@ -273,6 +284,7 @@ export function useBrowserState() {
 
   // ── Close all tabs ─────────────────────────────────────────────────────────
   const closeAllTabs = useCallback(() => {
+    navigationRequests.current.clear();
     setTabs((prev) => {
       prev.forEach((tab) => {
         try {
@@ -377,11 +389,16 @@ export function useBrowserState() {
 
     const url = formatUrl(rawUrl);
     const targetId = focusedTabId;
+    const request = Symbol();
+    navigationRequests.current.set(targetId, request);
+    const isCurrent = () => mounted.current && navigationRequests.current.get(targetId) === request;
 
     const doNavigate = () => {
+      if (!isCurrent()) return;
       void applyMuxForUrl(url);
-      setTabs((prev) =>
-        prev.map((t) => {
+      setTabs((prev) => {
+        if (!isCurrent()) return prev;
+        return prev.map((t) => {
           if (t.id !== targetId) return t;
 
           if (url === "petezah://newtab" || url.startsWith("petezah://")) {
@@ -411,6 +428,7 @@ export function useBrowserState() {
 
           if (t.frame?.go) {
             void applyMuxForUrl(url).then(() => {
+              if (!isCurrent()) return;
               try {
                 t.frame?.go?.(url);
               } catch {}
@@ -446,23 +464,17 @@ export function useBrowserState() {
             favicon: getFavicon(url),
             ...(frame ? { frame } : {}),
           };
-        })
-      );
+        });
+      });
     };
 
     if (url.startsWith("petezah://") || url === "about:blank") {
       doNavigate();
     } else if (!pxReady()) {
-      armPx().catch(() => {});
-      const start = Date.now();
-      const interval = setInterval(() => {
-        if (pxReady()) {
-          clearInterval(interval);
-          doNavigate();
-        } else if (Date.now() - start > 15000) {
-          clearInterval(interval);
-        }
-      }, 100);
+      void armPx().then(doNavigate).catch(() => {
+        if (!isCurrent()) return;
+        toast({ title: "Couldn't open page", description: "The connection couldn't start. Please try again." });
+      });
     } else {
       doNavigate();
     }

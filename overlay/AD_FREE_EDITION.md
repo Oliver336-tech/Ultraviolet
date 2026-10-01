@@ -68,3 +68,7 @@ by external providers. Their uptime, accounts and advertisements cannot be
  guaranteed by this edition. All catalog entries have not been individually played.
 Free Render services sleep after inactivity and have shared quotas; free Supabase
  storage and database limits also apply. See the original license for warranty terms.
+
+## Game availability
+
+Drive Mad is excluded from this edition's catalogue because the game redirects this host to its publisher's sitelock page. The publisher's restriction is preserved. Other game fixes retain the original author notices and use pinned asset sources.

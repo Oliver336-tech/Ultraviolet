@@ -101,7 +101,15 @@
     "scripts/verify-page.test.mjs",
     "src/components/AppViewerPage.tsx",
     "src/components/GameViewerPage.tsx",
-    "src/test/game-viewer-launch.test.tsx"
+    "src/test/game-viewer-launch.test.tsx",
+    "public/1k123.js",
+    "public/storage/data/collection.json",
+    "scripts/fixtures/ragdoll-hit-master-loader.js",
+    "scripts/game-sdk.test.mjs",
+    "scripts/proxy-worker.test.mjs",
+    "src/lib/browserInit.ts",
+    "src/test/browser-startup.test.tsx",
+    "src/test/proxy-startup.test.ts"
   ],
   "deleted": [
     "backend/utils/secrets.ts"
