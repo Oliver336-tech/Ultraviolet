@@ -19,7 +19,15 @@ assert.ok(bundle.includes('version:"1.1.0"'), 'Only the pinned official runtime 
 // iframe navigation has no clientId, but its real referrer/policy still exist.
 const requestEventAnchor = 'let E=new S(h,m.headers,e.body,e.method,e.destination,t);this.dispatchEvent(E);';
 assert.equal(bundle.split(requestEventAnchor).length - 1, 1, 'Unexpected Scramjet request event construction');
-const patchedBundle = bundle.replace(requestEventAnchor, 'let E=new S(h,m.headers,e.body,e.method,e.destination,t);E.originalRequest=e;this.dispatchEvent(E);');
+let patchedBundle = bundle.replace(requestEventAnchor, 'let E=new S(h,m.headers,e.body,e.method,e.destination,t);E.originalRequest=e;this.dispatchEvent(E);');
+// Worker constructors accept a WebIDL string, including URL objects from other
+// realms. Convert before the engine's same-realm instanceof URL check.
+for (const constructor of ['Worker', 'SharedWorker']) {
+  const anchor = `e.Proxy("${constructor}",{construct(t){t.args[0]=`;
+  assert.equal(patchedBundle.split(anchor).length - 1, 1, `Unexpected ${constructor} constructor hook`);
+  const conversion = `if(!t.args.length)throw new TypeError("${constructor} requires a script URL");if("symbol"==typeof t.args[0])throw new TypeError("Cannot convert a Symbol value to a string");t.args[0]=String(t.args[0]);`;
+  patchedBundle = patchedBundle.replace(anchor, `e.Proxy("${constructor}",{construct(t){${conversion}t.args[0]=`);
+}
 for (const [name, source] of [['scram', scramjetPath], ['libcurl', libcurlPath], ['baremux', baremuxPath]]) {
   const destination = path.join(root, 'public', name);
   rmSync(destination, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 // Based on MercuryWorkshop/Scramjet-App public/sw.js at
 // f6f83cbc93091e47b9c357eb00ea289828aedf94 (AGPL-3.0).
 var base = self.location.pathname.replace(/[^/]*$/, '');
-importScripts(base + 'scram/scramjet.all.js');
+importScripts(base + 'scram/scramjet.all.js?v=scramjet-1.1.0-r2');
 var { ScramjetServiceWorker } = $scramjetLoadWorker();
 var scramjet = new ScramjetServiceWorker();
 // Start before a controller message can populate config and make the bundled

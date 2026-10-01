@@ -87,6 +87,7 @@
     "scripts/game-security.test.mjs",
     "scripts/proxy-module-compat.js",
     "scripts/proxy-module-compat.test.mjs",
+    "scripts/proxy-worker-coercion.test.mjs",
     "scripts/proxy-worker.test.mjs",
     "scripts/public-entry.test.mjs",
     "scripts/render-build.mjs",

@@ -43,6 +43,10 @@ license is in `LISCENSE`; copyright notices are retained.
   decodes its actual parent referrer, applying the browser's referrer policy
   before transport. No publisher hosts, Origin headers, cookies or site signals
   are invented; downgrade and no-referrer privacy rules remain effective.
+- Worker and SharedWorker constructors perform standard string conversion
+  before URL rewriting. This accepts URL objects from other browser realms,
+  including Construct3's job workers, while preserving constructor options and
+  propagating invalid input and conversion errors.
 - Proxy requests to known advertising hosts are answered locally before any
   external transport request, including CrazyGames' separate
   `fafvertizing.crazygames.com` ad loader. The filter decodes destinations with

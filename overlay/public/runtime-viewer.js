@@ -35,10 +35,10 @@
     initialization = (async () => {
       const { ScramjetController } = $scramjetLoadController();
       controller = new ScramjetController({ prefix: '/afsd123k2/', files: {
-        wasm: '/scram/scramjet.wasm.wasm', all: '/scram/scramjet.all.js', sync: '/scram/scramjet.sync.js'
+        wasm: '/scram/scramjet.wasm.wasm', all: '/scram/scramjet.all.js?v=scramjet-1.1.0-r2', sync: '/scram/scramjet.sync.js'
       } });
       await controller.init();
-      await navigator.serviceWorker.register('/1k123.js?v=scramjet-1.1.0', { scope: '/', updateViaCache: 'none' });
+      await navigator.serviceWorker.register('/1k123.js?v=scramjet-1.1.0-r2', { scope: '/', updateViaCache: 'none' });
       await navigator.serviceWorker.ready;
       if (!navigator.serviceWorker.controller) await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('The connection could not start. Reload and try again.')), 15000);

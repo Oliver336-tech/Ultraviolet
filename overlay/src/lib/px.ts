@@ -4,7 +4,7 @@ function dir() {
   return typeof window !== 'undefined' && (window as any).__PZ_ORIGIN__ ? svgDirPath() : '/';
 }
 
-export const ENGINE_GEN = 'scramjet-1.1.0';
+export const ENGINE_GEN = 'scramjet-1.1.0-r2';
 
 export const PX = {
   get prefix() { return dir() + 'afsd123k2/'; },
@@ -13,7 +13,7 @@ export const PX = {
   stream: '/api/websocket/',
   edge: '/api/edge/',
   get sw() { return dir() + '1k123.js'; },
-  get coreAll() { return dir() + 'scram/scramjet.all.js'; },
+  get coreAll() { return dir() + 'scram/scramjet.all.js?v=' + encodeURIComponent(ENGINE_GEN); },
   get coreSync() { return dir() + 'scram/scramjet.sync.js'; },
   get coreWasm() { return dir() + 'scram/scramjet.wasm.wasm'; },
   get muxIndex() { return dir() + 'baremux/index.js'; },
