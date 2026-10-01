@@ -1,230 +1,105 @@
-if (navigator.userAgent.includes('Firefox')) {
-  Object.defineProperty(globalThis, 'crossOriginIsolated', {
-    value: true,
-    writable: false
-  });
+// Based on MercuryWorkshop/Scramjet-App public/sw.js at
+// f6f83cbc93091e47b9c357eb00ea289828aedf94 (AGPL-3.0).
+var base = self.location.pathname.replace(/[^/]*$/, '');
+importScripts(base + 'scram/scramjet.all.js');
+var { ScramjetServiceWorker } = $scramjetLoadWorker();
+var scramjet = new ScramjetServiceWorker();
+// Start before a controller message can populate config and make the bundled
+// loadConfig return early without initializing its codec and rewriter WASM.
+var startup = scramjet.loadConfig();
+var advertisingHosts = [
+  'doubleclick.net', 'googlesyndication.com', 'googleadservices.com',
+  'amazon-adsystem.com', 'adnxs.com', 'pubmatic.com', 'criteo.com',
+  'criteo.net', 'rubiconproject.com', 'adsrvr.org', '3lift.com',
+  'fafvertizing.crazygames.com',
+];
+var decoderSource;
+var decodeDestination;
+
+function decodeProxyDestination(raw) {
+    var requestUrl = new URL(raw);
+    if (requestUrl.origin !== self.location.origin || !requestUrl.pathname.startsWith(scramjet.config.prefix)) return null;
+    // Use the controller's configured codec, as the canonical engine does.
+    // Its module/worker query markers are separate from the encoded target.
+    if (decoderSource !== scramjet.config.codec.decode) {
+      decoderSource = scramjet.config.codec.decode;
+      decodeDestination = Function('return ' + decoderSource)();
+    }
+    return new URL(decodeDestination(requestUrl.pathname.slice(scramjet.config.prefix.length)));
 }
 
-var _base = self.location.pathname.replace(/[^/]*$/, '');
-var _p = _base + ['q', '9vx/'].join('');
-var _f = ['sj', '.all', '.js'].join('');
-var _v = ['dl', '13'].join('');
-try {
-  importScripts(_p + _f + '?v=' + _v);
-} catch (e) {}
-
-try {
-  importScripts(_base + 'b/rivet/router.js?v=' + _v);
-} catch (e) {}
-
-function handleRivet(event) {
-  var router = self.$rivetRouter;
-  if (!router || typeof router.shouldRoute !== 'function') return false;
+function isAdvertisingRequest(request) {
   try {
-    if (!router.shouldRoute(event)) return false;
-    event.respondWith(router.route(event));
-    return true;
-  } catch (e) {
+    var destination = decodeProxyDestination(request.url);
+    if (!destination) return false;
+    var host = destination.hostname.toLowerCase();
+    return advertisingHosts.some((blocked) => host === blocked || host.endsWith('.' + blocked));
+  } catch (_) {
     return false;
   }
 }
 
-var _lw = ['$', 'volt', 'edge', 'Load', 'Worker'].join('');
-var _sw = ['Volt', 'edge', 'Service', 'Worker'].join('');
-var _boot = self[_lw];
-if (typeof _boot !== 'function') {
-  self.addEventListener('install', function (event) {
-    event.waitUntil(self.skipWaiting());
-  });
-  self.addEventListener('activate', function (event) {
-    event.waitUntil(self.clients.claim());
-  });
-  self.addEventListener('fetch', function (event) {
-    if (handleRivet(event)) return;
-    event.respondWith(fetch(event.request));
-  });
-} else {
-var _exports = _boot();
-var _engine = new _exports[_sw]();
+function referrerForDestination(source, destination, policy) {
+  var referrer = new URL(source);
+  referrer.username = '';
+  referrer.password = '';
+  referrer.hash = '';
+  var sameOrigin = referrer.origin === destination.origin;
+  var downgrade = referrer.protocol === 'https:' && destination.protocol === 'http:';
+  var origin = referrer.origin + '/';
+  switch (policy) {
+    case 'no-referrer': return '';
+    case 'unsafe-url': return referrer.href;
+    case 'origin': return origin;
+    case 'same-origin': return sameOrigin ? referrer.href : '';
+    case 'origin-when-cross-origin': return sameOrigin ? referrer.href : origin;
+    case 'strict-origin': return downgrade ? '' : origin;
+    case 'no-referrer-when-downgrade': return downgrade ? '' : referrer.href;
+    case 'strict-origin-when-cross-origin':
+    default: return sameOrigin ? referrer.href : downgrade ? '' : origin;
+  }
+}
 
-var _pref = _base + ['afs', 'd123', 'k2/'].join('');
-var _hydrated = false;
-var _configPromise = null;
-
-self.addEventListener('install', function (event) {
-  event.waitUntil(self.skipWaiting());
+scramjet.addEventListener('request', (event) => {
+  var request = event.originalRequest;
+  if (!request || request.mode !== 'navigate') return;
+  event.requestHeaders['sec-fetch-dest'] = request.destination || 'empty';
+  event.requestHeaders['sec-fetch-mode'] = request.mode;
+  // No clientId exists for a newly navigated iframe. Restore only the context
+  // actually supplied by the browser, using its referrer policy upstream.
+  if (request.referrerPolicy === 'no-referrer') delete event.requestHeaders.referer;
+  var parent;
+  try { parent = decodeProxyDestination(request.referrer); } catch (_) { return; }
+  if (!parent || !['https:', 'http:'].includes(parent.protocol)) return;
+  var referrer = referrerForDestination(parent, event.url, request.referrerPolicy);
+  if (referrer) event.requestHeaders.referer = referrer;
+  else delete event.requestHeaders.referer;
 });
 
-self.addEventListener('activate', function (event) {
-  event.waitUntil(self.clients.claim());
-});
-
-function isAppShellRequest(request, url) {
-  if (url.origin !== self.location.origin) return false;
-  var path = url.pathname;
-  if (path.indexOf(_pref) === 0) return false;
-  if (path === _base || path === _base + 'index.html' || path === _base + 'index.svg' || path === _base + 'new.svg' || path === _base + '1k123.js') return true;
-  if (path.indexOf(_base + 'assets/') === 0) return true;
-  if (path.indexOf(_base + 'q9vx/') === 0) {
-    if (path.indexOf('.wasm') !== -1) return false;
-    return true;
-  }
-  if (path.indexOf(_base + 'm4thx/') === 0) return true;
-  if (path.indexOf(_base + 'e7px/') === 0) return true;
-  if (path.indexOf(_base + 'l9cx/') === 0) return true;
-  return false;
-}
-
-function delay(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, ms);
+function isolatedResponse(response) {
+  // These responses are created inside the worker, so the backend's isolation
+  // headers cannot reach them. Keep rewritten frames and worker resources
+  // compatible with our isolated parent without modifying their content. A
+  // service worker's own crossOriginIsolated flag does not describe its client.
+  var headers = new Headers(response.headers);
+  headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+  headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+  headers.set('Cross-Origin-Resource-Policy', 'same-origin');
+  return new Response(response.body, {
+    status: response.status, statusText: response.statusText, headers,
   });
-}
-
-function configReady(c) {
-  return !!(
-    c &&
-    c.prefix &&
-    c.files &&
-    c.files.wasm &&
-    c.files.all &&
-    c.files.sync
-  );
-}
-
-async function hydrateFromIdb() {
-  for (var i = 0; i < 40; i++) {
-    try {
-      // This engine receives config messages before its first request, but
-      // loadConfig returns early when config is already set. Clear that cached
-      // message so loadConfig initializes the codec and rewriter WASM from IDB.
-      // The bundled worker does not expose a setConfig method.
-      _engine.config = undefined;
-      await _engine.loadConfig();
-      if (configReady(_engine.config)) {
-        _hydrated = true;
-        return true;
-      }
-    } catch (e) {}
-    await delay(50);
-  }
-  return false;
-}
-
-async function ensureConfig() {
-  if (_hydrated && configReady(_engine.config)) return true;
-  if (_configPromise) return _configPromise;
-
-  _configPromise = hydrateFromIdb().finally(function () {
-    _configPromise = null;
-  });
-  return _configPromise;
-}
-
-async function applyConfigMessage() {
-  _hydrated = false;
-  await ensureConfig();
 }
 
 async function handleRequest(event) {
-  var url;
-  try {
-    url = new URL(event.request.url);
-  } catch (e) {
-    return fetch(event.request);
-  }
-
-  var ready = await ensureConfig();
-  if (!ready || !configReady(_engine.config)) {
-    if (url.pathname.indexOf(_pref) === 0) {
-      return new Response('Proxy engine not ready', { status: 503, statusText: 'Service Unavailable' });
-    }
-    try {
-      return await fetch(event.request);
-    } catch (e) {
-      return new Response('Network error', { status: 502 });
-    }
-  }
-
-  try {
-    if (_engine.route(event)) {
-      return await _engine.fetch(event);
-    }
-  } catch (e) {
-    if (url.pathname.indexOf(_pref) === 0) {
-      return new Response('Proxy fetch failed', { status: 502 });
-    }
-  }
-
-  try {
-    return await fetch(event.request);
-  } catch (e) {
-    return new Response('Network error', { status: 502 });
-  }
+  await startup;
+  await scramjet.loadConfig();
+  if (isAdvertisingRequest(event.request)) return new Response(null, {
+    status: 204,
+    headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
+  });
+  if (scramjet.route(event)) return isolatedResponse(await scramjet.fetch(event));
+  return fetch(event.request);
 }
-
-self.addEventListener('fetch', function (event) {
-  if (handleRivet(event)) return;
-  try {
-    var url = new URL(event.request.url);
-    var wasmPath = (_engine.config && _engine.config.files && _engine.config.files.wasm) || _base + 'q9vx/ld.bin';
-    // The engine injects this WASM URL as JavaScript. Module imports inside a
-    // worker retain that worker's destination, rather than using "script".
-    // Keep raw WASM fetches (the empty destination) as binary responses.
-    var destination = event.request.destination;
-    var wasmScript = url.pathname === wasmPath && (
-      destination === 'script' || destination === 'worker' || destination === 'sharedworker'
-    );
-    if (url.origin !== self.location.origin || (url.pathname.indexOf(_pref) !== 0 && !wasmScript)) {
-      return;
-    }
-  } catch (e) {
-    return;
-  }
-  event.respondWith(handleRequest(event));
-});
-
-var playgroundData;
-self.addEventListener('message', function (msg) {
-  var data = msg.data;
-  if (!data) return;
-  if (data.type === 'playgroundData') {
-    playgroundData = data;
-  }
-  if (data[['volt', 'edge', '$type'].join('')] === 'loadConfig') {
-    var p = applyConfigMessage();
-    if (typeof msg.waitUntil === 'function') {
-      try {
-        msg.waitUntil(p);
-      } catch (e) {}
-    }
-  }
-});
-
-_engine.addEventListener('request', function (e) {
-  if (playgroundData && e.url.href.indexOf(playgroundData.origin) === 0) {
-    var headers = {};
-    var origin = playgroundData.origin;
-    if (e.url.href === origin + '/') {
-      headers['content-type'] = 'text/html';
-      e.response = new Response(playgroundData.html, { headers: headers });
-    } else if (e.url.href === origin + '/style.css') {
-      headers['content-type'] = 'text/css';
-      e.response = new Response(playgroundData.css, { headers: headers });
-    } else if (e.url.href === origin + '/script.js') {
-      headers['content-type'] = 'application/javascript';
-      e.response = new Response(playgroundData.js, { headers: headers });
-    } else {
-      e.response = new Response('empty response', { headers: headers });
-    }
-    e.response.rawHeaders = headers;
-    e.response.rawResponse = {
-      body: e.response.body,
-      headers: headers,
-      status: e.response.status,
-      statusText: e.response.statusText
-    };
-    e.response.finalURL = e.url.toString();
-  }
-});
-}
+self.addEventListener('fetch', (event) => event.respondWith(handleRequest(event)));
+self.addEventListener('install', (event) => event.waitUntil(self.skipWaiting()));
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));

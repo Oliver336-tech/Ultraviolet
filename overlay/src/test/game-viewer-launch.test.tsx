@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import GameViewerPage from "@/components/GameViewerPage";
 import AppViewerPage from "@/components/AppViewerPage";
 
-const proxy = vi.hoisted(() => ({ ready: false, arm: vi.fn(), openNative: vi.fn(), openProxy: vi.fn() }));
+const proxy = vi.hoisted(() => ({ ready: false, arm: vi.fn(), mux: vi.fn(), openNative: vi.fn(), openProxy: vi.fn() }));
 vi.mock("@/lib/px", () => ({
   pxReady: () => proxy.ready,
   pxCreateFrame: () => ({ frame: document.createElement("iframe") }),
@@ -11,7 +11,7 @@ vi.mock("@/lib/px", () => ({
 }));
 vi.mock("@/lib/browserInit", () => ({ armPx: proxy.arm }));
 vi.mock("@/lib/proxyTarget", () => ({
-  applyMuxForUrl: async () => true,
+  applyMuxForUrl: proxy.mux,
   unwrapPlayUrl: (url: string) => url,
 }));
 vi.mock("@/lib/openTabBridge", () => ({ openNativeWindow: proxy.openNative, openProxiedTab: proxy.openProxy }));
@@ -20,6 +20,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   proxy.ready = false;
   proxy.arm.mockReset().mockResolvedValue(undefined);
+  proxy.mux.mockReset().mockResolvedValue(true);
   proxy.openNative.mockReset();
   proxy.openProxy.mockReset();
 });
@@ -32,11 +33,13 @@ describe("ad-free viewer launch", () => {
   for (const [kind, Viewer] of [["game", GameViewerPage], ["app", AppViewerPage]] as const) {
     it(`shows the ${kind} frame when the proxy becomes ready after the first render`, async () => {
       const url = "https://example.org/play";
+      let finish!: () => void;
+      proxy.arm.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
       const result = render(<Viewer url={url} title="Test player" />);
       expect(result.container.querySelector("iframe")).toBeNull();
 
       proxy.ready = true;
-      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+      await act(async () => { finish(); });
       const frame = result.container.querySelector("iframe")!;
       expect(frame).not.toBeNull();
       expect(frame.getAttribute("src")).toBe("/afsd123k2/" + encodeURIComponent(url));
@@ -48,6 +51,25 @@ describe("ad-free viewer launch", () => {
       expect(frame.style.pointerEvents).toBe("auto");
     });
   }
+
+  it("reports a failed game transport without navigating an empty frame", async () => {
+    proxy.ready = true;
+    proxy.mux.mockResolvedValue(false);
+    const result = render(<GameViewerPage url="https://example.org/play" title="Test player" />);
+    await act(async () => {});
+    expect(result.getByRole("alert")).toHaveTextContent("transport could not connect");
+    expect(result.container.querySelector("iframe")).toBeNull();
+  });
+
+  it("does not launch a game after its viewer was closed during startup", async () => {
+    let finish!: () => void;
+    proxy.arm.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const result = render(<GameViewerPage url="https://example.org/play" title="Test player" />);
+    result.unmount();
+    proxy.ready = true;
+    await act(async () => { finish(); });
+    expect(proxy.mux).not.toHaveBeenCalled();
+  });
 
   it("plays Precision inline and opens its working path only on an explicit click", () => {
     const url = "/storage/ag/originals/precision/index.html";

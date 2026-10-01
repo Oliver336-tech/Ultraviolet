@@ -170,6 +170,7 @@ export default function GameViewerPage({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [muted, setMuted] = useState(false);
+  const [launchError, setLaunchError] = useState("");
   const { unlocked, phase, finishLoading, hadAd } = useInterstitialUnlock("game");
   const playbackState = useRef({ unlocked, muted });
   playbackState.current = { unlocked, muted };
@@ -234,55 +235,44 @@ export default function GameViewerPage({
     if (!useProxy || !canPreload) return;
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
-    armPx().catch(() => {});
-
-    const tryCreate = () => {
-      if (!pxReady()) return false;
+    let cancelled = false;
+    setLaunchError("");
+    const launch = async () => {
       try {
-        if (frameHostRef.current?.parentNode) return true;
+        await armPx();
+        if (cancelled) return;
+        if (!pxReady()) throw new Error("The game connection could not start. Reload and try again.");
+        if (!(await applyMuxForUrl(playUrl))) throw new Error("The game transport could not connect. Reload and try again.");
+        if (cancelled) return;
         const scFrame = pxCreateFrame();
-        if (!scFrame) return false;
+        if (!scFrame) throw new Error("The game frame could not be created.");
         const frame = scFrame.frame as HTMLIFrameElement;
+        frame.title = displayTitle;
+        frame.allow = "fullscreen; autoplay; gamepad; cross-origin-isolated";
         frame.style.cssText =
           "position:absolute;inset:0;width:100%;height:100%;border:none;opacity:0;transition:opacity 0.25s ease;";
         frame.onload = () => {
           syncFrameState(frame);
         };
-        void applyMuxForUrl(playUrl).then(() => {
-          try {
-            frame.src = pxEncode(playUrl);
-          } catch {}
-        });
+        frame.src = pxEncode(playUrl);
         frameHostRef.current = frame;
         wrapper.appendChild(frame);
         syncFrameState(frame);
         requestAnimationFrame(() => applyZoom(zoomRef.current));
-        return true;
-      } catch {
-        return false;
+      } catch (failure) {
+        if (!cancelled) setLaunchError(failure instanceof Error ? failure.message : "The game could not be opened.");
       }
     };
-
-    if (!tryCreate()) {
-      const interval = setInterval(() => {
-        if (tryCreate()) clearInterval(interval);
-      }, 100);
-      return () => {
-        clearInterval(interval);
-        if (frameHostRef.current?.parentNode) {
-          frameHostRef.current.parentNode.removeChild(frameHostRef.current);
-        }
-        frameHostRef.current = null;
-      };
-    }
+    void launch();
 
     return () => {
+      cancelled = true;
       if (frameHostRef.current?.parentNode) {
         frameHostRef.current.parentNode.removeChild(frameHostRef.current);
       }
       frameHostRef.current = null;
     };
-  }, [playUrl, useProxy, canPreload, applyZoom, syncFrameState]);
+  }, [playUrl, useProxy, canPreload, applyZoom, syncFrameState, displayTitle]);
 
   useEffect(() => {
     const frame = frameHostRef.current;
@@ -351,6 +341,12 @@ export default function GameViewerPage({
             />
           )}
         </div>
+
+        {useProxy && launchError && (
+          <div role="alert" className="absolute inset-0 flex items-center justify-center p-8 text-center text-white">
+            {launchError}
+          </div>
+        )}
 
         <InterstitialOverlay
           phase={phase}

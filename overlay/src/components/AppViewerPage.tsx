@@ -138,6 +138,7 @@ export default function AppViewerPage({ url, title, onBack }: AppViewerPageProps
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [muted, setMuted] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
   const { unlocked, phase } = useInterstitialUnlock("app");
   const playbackState = useRef({ unlocked, muted });
   playbackState.current = { unlocked, muted };
@@ -172,55 +173,52 @@ export default function AppViewerPage({ url, title, onBack }: AppViewerPageProps
     if (!canPreload) return;
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
+    let cancelled = false;
+    let frame: HTMLIFrameElement | null = null;
+    setLaunchError(null);
 
-    armPx().catch(() => {});
-
-    const tryCreate = () => {
-      if (!pxReady()) return false;
+    void (async () => {
       try {
-        if (frameHostRef.current?.parentNode) return true;
+        await armPx();
+        if (cancelled) return;
+        if (!pxReady()) throw new Error("The browser connection is not ready");
+        const connected = await applyMuxForUrl(url);
+        if (cancelled) return;
+        if (!connected) throw new Error("The connection could not start. Please try again");
         const scFrame = pxCreateFrame();
-        if (!scFrame) return false;
-        scFrame.frame.style.cssText =
+        if (!scFrame?.frame) throw new Error("The app could not open a browser frame");
+        const encodedUrl = pxEncode(url);
+        if (!encodedUrl || encodedUrl === "about:blank") throw new Error("The app address could not be opened");
+        const readyFrame: HTMLIFrameElement = scFrame.frame;
+        frame = readyFrame;
+        readyFrame.style.cssText =
           "position:absolute;inset:0;width:100%;height:100%;border:none;opacity:0;transition:opacity 0.25s ease;pointer-events:none;";
-        scFrame.frame.onload = () => {
-          syncFrameState(scFrame.frame);
+        readyFrame.title = displayTitle;
+        readyFrame.onload = () => {
+          if (!cancelled && frame) syncFrameState(frame);
         };
-        void applyMuxForUrl(url).then(() => {
-          try {
-            scFrame.frame.src = pxEncode(url);
-          } catch {}
+        readyFrame.src = encodedUrl;
+        frameHostRef.current = readyFrame;
+        wrapper.appendChild(readyFrame);
+        syncFrameState(readyFrame);
+        requestAnimationFrame(() => {
+          if (!cancelled) applyZoom(zoomRef.current);
         });
-        frameHostRef.current = scFrame.frame;
-        wrapper.appendChild(scFrame.frame);
-        syncFrameState(scFrame.frame);
-        requestAnimationFrame(() => applyZoom(zoomRef.current));
-        return true;
-      } catch {
-        return false;
+      } catch (error) {
+        if (cancelled) return;
+        frame?.remove();
+        if (frameHostRef.current === frame) frameHostRef.current = null;
+        setLaunchError(error instanceof Error ? error.message : String(error || "The app could not load"));
       }
-    };
-
-    if (!tryCreate()) {
-      const interval = setInterval(() => {
-        if (tryCreate()) clearInterval(interval);
-      }, 100);
-      return () => {
-        clearInterval(interval);
-        if (frameHostRef.current?.parentNode) {
-          frameHostRef.current.parentNode.removeChild(frameHostRef.current);
-        }
-        frameHostRef.current = null;
-      };
-    }
+    })();
 
     return () => {
-      if (frameHostRef.current?.parentNode) {
-        frameHostRef.current.parentNode.removeChild(frameHostRef.current);
-      }
-      frameHostRef.current = null;
+      cancelled = true;
+      if (frame) frame.onload = null;
+      frame?.remove();
+      if (frameHostRef.current === frame) frameHostRef.current = null;
     };
-  }, [url, canPreload, applyZoom, syncFrameState]);
+  }, [url, displayTitle, canPreload, applyZoom, syncFrameState]);
 
   useEffect(() => {
     const frame = frameHostRef.current;
@@ -273,6 +271,12 @@ export default function AppViewerPage({ url, title, onBack }: AppViewerPageProps
         />
 
         <InterstitialOverlay phase={phase} />
+        {launchError && (
+          <div role="alert" className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-[#060c1a] px-6 text-center text-white">
+            <p>Could not open this app</p>
+            <p className="text-sm text-white/70">{launchError}</p>
+          </div>
+        )}
 
         <AnimatePresence>
           {controlsVisible && (

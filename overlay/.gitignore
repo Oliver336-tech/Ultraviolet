@@ -253,3 +253,7 @@ svg/
 # Plain source module, not a credential file.
 !backend/utils/secrets.js
 !package-lock.json
+## Official proxy distributions are reproduced from package-lock.json.
+/public/scram/
+/public/baremux/
+/public/libcurl/

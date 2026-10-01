@@ -66,11 +66,11 @@ function start() {
 }
 
 describe("proxy startup readiness", () => {
-  it("does not mark the engine ready after service worker registration fails", async () => {
+  it("does not publish a controller as ready after service worker registration fails", async () => {
     serviceWorker.register.mockRejectedValue(new Error("Registration denied"));
     await expect(start()).rejects.toThrow("Registration denied");
     expect((window as any).__pz).toBeUndefined();
-    expect(engine.init).not.toHaveBeenCalled();
+    expect(engine.init).toHaveBeenCalledOnce();
   });
 
   it("rejects a service worker that never becomes ready within the deadline", async () => {
@@ -88,7 +88,7 @@ describe("proxy startup readiness", () => {
     const result = expect(attempt).rejects.toThrow("did not take control");
     await vi.advanceTimersByTimeAsync(10001);
     await result;
-    expect(engine.init).not.toHaveBeenCalled();
+    expect(engine.init).toHaveBeenCalledOnce();
     expect((window as any).__pz).toBeUndefined();
   });
 

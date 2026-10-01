@@ -1,6 +1,6 @@
 # PeteZah Games — Ad-Free Edition
 
-Modified 30 September 2026 from https://github.com/PeteZah-Games/PeteZahGames
+Modified 1 October 2026 from https://github.com/PeteZah-Games/PeteZahGames
 at upstream commit `819f1fdd0c4b67763973ac3555189f7ca9121155`.
 This is an independent modified edition, under AGPL-3.0-only. The upstream
 license is in `LISCENSE`; copyright notices are retained.
@@ -9,7 +9,7 @@ license is in `LISCENSE`; copyright notices are retained.
 
 - Removed site-owned banner, interstitial, native and video ads, advertising
   network requests and injected Google tracking. Games skip advertising gates.
-- Restored the 445 local game destinations through pinned source providers.
+- Restored the local game destinations through pinned source providers.
   Known advertising loaders are sanitized and ad SDK callbacks remain usable.
   `/storage/ag/sources.json` describes per-game sources, credits and the obsolete
   Minecraft Java applet's replacement with a browser client.
@@ -18,6 +18,42 @@ license is in `LISCENSE`; copyright notices are retained.
 - Removed first-signup administrator access. Owner access requires verification.
 - Fixed proxy path rewriting, popup handling, AI conversation loading and type
   errors. Unsupported Tor and geographic relay claims were removed.
+- Replaced the renamed, floating proxy build and legacy embed launchers with
+  the official MercuryWorkshop/Scramjet-App setup at commit
+  `f6f83cbc93091e47b9c357eb00ea289828aedf94`: Scramjet 1.1.0, BareMux 2.1.9,
+  libcurl transport 1.5.2 and Wisp 0.4.1, with locked package integrity hashes.
+  The demo, pinned Scramjet package and libcurl transport ship AGPL-3.0 license
+  files; BareMux ships an MIT license. Scramjet 1.1.0's package metadata says MIT,
+  which differs from its shipped license file. The vendor step preserves each
+  actual license at `/scram/LICENSE`, `/baremux/LICENSE` and `/libcurl/LICENSE`.
+  Catalogue wrappers recover the original publisher URL and use this same runtime.
+- Added a small, reproducible compatibility hook to the pinned Scramjet bundle.
+  Its DOM-created module scripts now use the same `?type=module` URL as static
+  and dynamic imports, so cyclic game modules share one instance. This fixes
+  CrazyGames gameframe's duplicate React dispatcher error. The vendor step
+  checks the upstream bundle hash and single client export before copying and
+  appending the hook; canonical names, rewriter WASM and TLS validation stay
+  unchanged. A cold service worker also begins its actual rewriter setup before
+  controller messages can skip initialization. Synthetic proxy responses carry
+  matching COOP, COEP and CORP headers under this edition's isolation policy, so proxied
+  game frames and worker resources can load inside the isolated application.
+- Restored actual browser navigation metadata when a new iframe has no
+  `clientId`. A checked vendor insertion exposes the original Request on the
+  existing runtime request event. The worker preserves its real destination and
+  decodes its actual parent referrer, applying the browser's referrer policy
+  before transport. No publisher hosts, Origin headers, cookies or site signals
+  are invented; downgrade and no-referrer privacy rules remain effective.
+- Proxy requests to known advertising hosts are answered locally before any
+  external transport request, including CrazyGames' separate
+  `fafvertizing.crazygames.com` ad loader. The filter decodes destinations with
+  the configured runtime codec and matches host boundaries. Publisher game
+  files, game SDKs, Google fonts and other ordinary resources retain their normal
+  proxy behavior. This covers known advertising networks, not every possible
+  advertisement embedded by an external provider.
+- Public home, catalogue and browsing paths no longer require a universal
+  agreement overlay. Account signup keeps its consent requirements. CAPTCHA
+  challenges respond to observed abuse; server bans and transport protections
+  remain enabled. Proxy startup failures now display a useful error.
 
 ## Deployment and source
 
@@ -36,7 +72,9 @@ it does not require `overlay.json` or the overlay bootstrap step. After extracti
 it, install Node.js 22 or newer and run these commands from its root directory:
 
 ```sh
-npm ci --include=dev
+npm ci --include=dev --ignore-scripts
+npm rebuild bcrypt better-sqlite3
+npm run postinstall
 node scripts/render-build.mjs
 node scripts/start-render.mjs
 ```

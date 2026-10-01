@@ -27,7 +27,11 @@ for (const file of manifest.files) {
   cpSync(path.join(root, 'overlay', file), path.join(app, file));
 }
 writeFileSync(path.join(app, 'SOURCE_EDITION.json'), JSON.stringify({ upstream, edition: 'ad-free', overlay: process.env.RENDER_GIT_COMMIT || null }, null, 2));
-run('npm', ['ci', '--include=dev'], app);
+// The official prebuilt Scramjet package has a package-manager preference hook.
+// Build only our native server modules, then run our own asset-vendoring hook.
+run('npm', ['ci', '--include=dev', '--ignore-scripts'], app);
+run('npm', ['rebuild', 'bcrypt', 'better-sqlite3'], app);
+run('npm', ['run', 'postinstall'], app);
 run(process.execPath, ['scripts/test-postgres-adapter.mjs'], app);
 run(process.execPath, ['scripts/render-build.mjs'], app);
 // Use an explicit source allowlist. Never include data, uploads, environment

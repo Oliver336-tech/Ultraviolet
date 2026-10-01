@@ -1,40 +1,13 @@
 import {
-  PX,
-  ENGINE_GEN,
-  loadCtrlFactory,
-  ctrlClassName,
-  openMuxConnection,
-  setMuxTransport,
-  muxSetName,
-  cfgStreamUrl,
-  defaultStreamUrl,
-  defaultEdgeUrl,
-  getMuxRoot,
-} from "./px";
-import { revealCodes } from "./mask";
-import { urlCodecDecode, urlCodecEncode } from "./urlCodec";
+  PX, ENGINE_GEN, loadCtrlFactory, ctrlClassName, openMuxConnection,
+  setMuxTransport, cfgStreamUrl, defaultStreamUrl,
+} from './px';
 
 declare global {
   interface Window {
     __pz: any;
     __browserInitialized: boolean;
   }
-}
-
-function dbName() {
-  return String.fromCharCode(36, 118, 111, 108, 116, 101, 100, 103, 101);
-}
-
-const STORES = [
-  "config",
-  "cookies",
-  "redirectTrackers",
-  "referrerPolicies",
-  "publicSuffixList",
-];
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 function withTimeout<T>(job: Promise<T>, ms: number, message: string): Promise<T> {
@@ -49,420 +22,148 @@ function withTimeout<T>(job: Promise<T>, ms: number, message: string): Promise<T
 
 let proxyArmed = false;
 let proxyArmWaiters: Array<() => void> = [];
-
 function markProxyArmed() {
   if (proxyArmed) return;
   proxyArmed = true;
-  const waiters = proxyArmWaiters;
-  proxyArmWaiters = [];
-  for (const w of waiters) w();
+  for (const resolve of proxyArmWaiters.splice(0)) resolve();
 }
-
-function installProxyArmCapture() {
-  if (typeof document === "undefined") return;
-  const arm = () => markProxyArmed();
-  for (const evt of ["pointerdown", "keydown", "click"] as const) {
-    document.addEventListener(evt, arm, { capture: true, passive: true });
+if (typeof document !== 'undefined') {
+  for (const event of ['pointerdown', 'keydown', 'click']) {
+    document.addEventListener(event, markProxyArmed, { capture: true, passive: true });
   }
 }
-
-installProxyArmCapture();
-
-export function armProxySession() {
-  markProxyArmed();
-}
-
-async function waitForProxyArm(timeoutMs = 120000): Promise<void> {
+export function armProxySession() { markProxyArmed(); }
+async function waitForProxyArm(): Promise<void> {
   if (proxyArmed) return;
-  await new Promise<void>((resolve, reject) => {
-    if (proxyArmed) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(() => {
-      proxyArmWaiters = proxyArmWaiters.filter((w) => w !== done);
-      reject(new Error("arm timeout"));
-    }, timeoutMs);
-    const done = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    proxyArmWaiters.push(done);
-  });
+  await withTimeout(new Promise<void>((resolve) => proxyArmWaiters.push(resolve)), 120000, 'Proxy startup needs a user action');
 }
 
 function deleteDb(name: string): Promise<void> {
   return new Promise((resolve) => {
+    const timer = setTimeout(resolve, 2500);
     try {
-      const req = indexedDB.deleteDatabase(name);
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        resolve();
-      };
-      req.onsuccess = finish;
-      req.onerror = finish;
-      req.onblocked = () => {};
-      setTimeout(finish, 2500);
-    } catch {
-      resolve();
-    }
+      const request = indexedDB.deleteDatabase(name);
+      const finish = () => { clearTimeout(timer); resolve(); };
+      request.onsuccess = finish;
+      request.onerror = finish;
+    } catch { clearTimeout(timer); resolve(); }
   });
-}
-
-function openDbCheck(): Promise<{ broken: boolean; version: number }> {
-  return new Promise((resolve) => {
-    try {
-      const req = indexedDB.open(dbName());
-      req.onerror = () => resolve({ broken: true, version: 0 });
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        for (const s of STORES) {
-          if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
-        }
-      };
-      req.onsuccess = () => {
-        const db = req.result;
-        const broken = STORES.some((s) => !db.objectStoreNames.contains(s));
-        const version = db.version;
-        db.close();
-        resolve({ broken, version });
-      };
-    } catch {
-      resolve({ broken: true, version: 0 });
-    }
-  });
-}
-
-function createDbWithStores(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    try {
-      const req = indexedDB.open(dbName(), 1);
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        for (const s of STORES) {
-          if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
-        }
-      };
-      req.onsuccess = () => {
-        const db = req.result;
-        const ok = STORES.every((s) => db.objectStoreNames.contains(s));
-        db.close();
-        if (ok) resolve();
-        else reject(new Error("stores still missing after create"));
-      };
-      req.onerror = () => reject(req.error || new Error("idb open failed"));
-      req.onblocked = () => {};
-    } catch (e) {
-      reject(e);
-    }
-  });
-}
-
-function oldDbName() {
-  return revealCodes([51, 101, 118, 102, 118, 123, 127, 113, 99]);
-}
-
-function engKey() {
-  return String.fromCharCode(112, 122, 45, 101, 103);
 }
 
 async function migrateEngineOnce(): Promise<void> {
-  try {
-    const u = new URL(location.href);
-    if (u.searchParams.has("_eg")) {
-      u.searchParams.delete("_eg");
-      history.replaceState(null, "", u.pathname + u.search + u.hash);
-    }
-    const stamp =
-      (typeof window !== "undefined" && (window as any).__PZ_EG__) ||
-      [ENGINE_GEN, (window as any).__PZ_CACHE__].filter(Boolean).join("-") ||
-      ENGINE_GEN;
-    if (localStorage.getItem(engKey()) === stamp) return;
-    await clearServiceWorkers();
-    await deleteDb(oldDbName());
-    await deleteDb(String.fromCharCode(36, 100, 117, 115, 107, 108, 105, 110, 101));
-    await deleteDb(String.fromCharCode(36, 118, 111, 108, 116, 101, 100, 103, 101));
-    await deleteDb(dbName());
-    try {
-      localStorage.setItem(engKey(), stamp);
-    } catch {}
-  } catch {
-    return;
+  const stamp = (window as any).__PZ_EG__ || [ENGINE_GEN, (window as any).__PZ_CACHE__].filter(Boolean).join('-');
+  if (localStorage.getItem('pz-eg') === stamp) return;
+  if ('serviceWorker' in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
   }
-}
-
-async function repairPxStore() {
-  for (let i = 0; i < 6; i++) {
-    const { broken, version } = await openDbCheck();
-    if (!broken && version === 1) return;
-    await deleteDb(dbName());
-    await sleep(250 + i * 100);
-    try {
-      await createDbWithStores();
-    } catch {}
-    await sleep(100);
-  }
-}
-
-async function clearServiceWorkers() {
-  if (!("serviceWorker" in navigator)) return;
-  try {
-    const regs = await navigator.serviceWorker.getRegistrations();
-    await Promise.all(regs.map((r) => r.unregister()));
-  } catch {}
-  try {
+  if (typeof caches !== 'undefined') {
     const keys = await caches.keys();
-    await Promise.all(keys.map((k) => caches.delete(k)));
-  } catch {}
-  await sleep(400);
+    await Promise.all(keys.map((key) => caches.delete(key)));
+  }
+  // A new generation removes the old renamed engine databases. Let the real
+  // ScramjetController create its own schema instead of duplicating it here.
+  await Promise.all(['$scramjet', '$voltedge', '$duskline'].map(deleteDb));
+  localStorage.setItem('pz-eg', stamp);
 }
 
-async function registerSw() {
-  await waitForProxyArm();
-  if (!("serviceWorker" in navigator)) {
-    throw new Error("This browser does not support the proxy service worker");
-  }
-  const ver = [ENGINE_GEN, (window as any).__PZ_CACHE__].filter(Boolean).join("-");
-  const swUrl = `${PX.sw}?v=${encodeURIComponent(ver)}`;
-  const reg = await withTimeout(navigator.serviceWorker.register(swUrl, {
-    updateViaCache: "none",
-    scope: (window as any).__PZ_ORIGIN__ ? new URL(".", location.href).pathname : "/",
-  }), 10000, "Proxy service worker registration timed out");
-  try {
-    await withTimeout(reg.update(), 5000, "Proxy service worker update timed out");
-  } catch {}
-  if (reg.installing) {
+async function registerSw(): Promise<void> {
+  if (!('serviceWorker' in navigator)) throw new Error('This browser does not support the proxy service worker');
+  const registration = await withTimeout(navigator.serviceWorker.register(
+    PX.sw + '?v=' + encodeURIComponent(ENGINE_GEN),
+    { updateViaCache: 'none', scope: (window as any).__PZ_ORIGIN__ ? new URL('.', location.href).pathname : '/' },
+  ), 10000, 'Proxy service worker registration timed out');
+  try { await withTimeout(registration.update(), 5000, 'Proxy service worker update timed out'); } catch {}
+  if (registration.installing) {
+    const installing = registration.installing;
     await withTimeout(new Promise<void>((resolve, reject) => {
-      const w = reg.installing;
-      if (!w) return resolve();
-      w.addEventListener("statechange", () => {
-        if (w.state === "activated") resolve();
-        if (w.state === "redundant") reject(new Error("Proxy service worker could not activate"));
-      });
-      if (w.state === "activated") resolve();
-      if (w.state === "redundant") reject(new Error("Proxy service worker could not activate"));
-    }), 10000, "Proxy service worker activation timed out");
+      const check = () => {
+        if (installing.state === 'activated') resolve();
+        else if (installing.state === 'redundant') reject(new Error('Proxy service worker could not activate'));
+      };
+      installing.addEventListener('statechange', check);
+      check();
+    }), 10000, 'Proxy service worker activation timed out');
   }
-  await withTimeout(navigator.serviceWorker.ready, 10000, "Proxy service worker did not become ready");
+  await withTimeout(navigator.serviceWorker.ready, 10000, 'Proxy service worker did not become ready');
   await withTimeout(new Promise<void>((resolve) => {
-    if (navigator.serviceWorker.controller) {
-      resolve();
-      return;
-    }
-    navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), {
-      once: true,
-    });
-  }), 10000, "Proxy service worker did not take control of this page");
-  if (!navigator.serviceWorker.controller) {
-    throw new Error("Proxy service worker is not controlling this page");
-  }
-  return reg;
-}
-
-async function setupMux() {
-  await waitFor(() => !!getMuxRoot(), 5000);
-
-  try {
-    localStorage.setItem(muxPathKey(), PX.muxWorker);
-  } catch {}
-
-  const streamUrl = cfgStreamUrl((window as any)._CONFIG) || defaultStreamUrl();
-  const edgeUrl = (window as any)._CONFIG?.bareurl || defaultEdgeUrl();
-  const connection = openMuxConnection(PX.muxWorker);
-  if (!connection) {
-    throw new Error("mux connection unavailable");
-  }
-
-  const setT = muxSetName();
-  let attempts = 0;
-  while (attempts < 12) {
-    try {
-      await setMuxTransport(connection, PX.tunMod, streamUrl);
-      return;
-    } catch {
-      try {
-        await connection[setT](PX.muxMod, [edgeUrl]);
-        return;
-      } catch {
-        try {
-          await setMuxTransport(connection, PX.curlMod, streamUrl);
-          return;
-        } catch {
-          attempts++;
-          if (attempts >= 12) {
-            throw new Error("Failed to set any transport");
-          }
-          await sleep(150);
-        }
+    if (navigator.serviceWorker.controller) return resolve();
+    const check = () => {
+      if (navigator.serviceWorker.controller) {
+        navigator.serviceWorker.removeEventListener('controllerchange', check);
+        resolve();
       }
-    }
-  }
+    };
+    navigator.serviceWorker.addEventListener('controllerchange', check);
+    check();
+  }), 10000, 'Proxy service worker did not take control of this page');
 }
 
-function muxPathKey() {
-  return revealCodes([116, 122, 124, 100, 58, 123, 96, 108, 58, 102, 116, 96, 127]);
-}
-
-function cfgMsgType() {
-  return String.fromCharCode(
-    118, 111, 108, 116, 101, 100, 103, 101, 36, 116, 121, 112, 101
-  );
+async function setupMux(): Promise<void> {
+  const connection = openMuxConnection(PX.muxWorker);
+  if (!connection) throw new Error('Proxy transport is unavailable');
+  await setMuxTransport(connection, PX.curlMod, cfgStreamUrl((window as any)._CONFIG) || defaultStreamUrl());
 }
 
 function loadScriptOnce(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[data-px-src="${src}"]`) as HTMLScriptElement | null;
-    if (existing) {
-      if ((existing as any).dataset.loaded === "1") return resolve();
-      existing.addEventListener("load", () => resolve(), { once: true });
-      existing.addEventListener("error", () => reject(new Error("script load failed")), { once: true });
-      return;
+    let script = document.querySelector(`script[data-px-src="${src}"]`) as HTMLScriptElement | null;
+    if (script?.dataset.loaded === '1') return resolve();
+    if (script?.dataset.failed === '1') { script.remove(); script = null; }
+    if (!script) {
+      script = document.createElement('script');
+      script.src = src;
+      script.async = false;
+      script.dataset.pxSrc = src;
     }
-    const s = document.createElement("script");
-    s.src = src;
-    s.async = false;
-    s.dataset.pxSrc = src;
-    s.onload = () => {
-      s.dataset.loaded = "1";
-      resolve();
-    };
-    s.onerror = () => reject(new Error("script load failed"));
-    document.head.appendChild(s);
+    const element = script;
+    element.addEventListener('load', () => { element.dataset.loaded = '1'; resolve(); }, { once: true });
+    element.addEventListener('error', () => { element.dataset.failed = '1'; reject(new Error('Proxy script could not load')); }, { once: true });
+    if (!element.isConnected) document.head.appendChild(element);
   });
 }
 
 let ensurePromise: Promise<void> | null = null;
-
+let initializationPromise: Promise<void> | null = null;
 export async function armPx(): Promise<void> {
-  if ((window as any).__pzEgMig) {
-    throw new Error("Proxy storage is updating. Reload the page after the update finishes");
-  }
-  if ((window as any).__pz) return;
+  if ((window as any).__pzEgMig) throw new Error('Proxy storage is updating. Reload the page after the update finishes');
+  if (window.__pz) return;
   if (ensurePromise) return ensurePromise;
-
   ensurePromise = (async () => {
     await waitForProxyArm();
-    await withTimeout(migrateEngineOnce(), 20000, "Proxy storage update timed out");
-    await withTimeout(loadScriptOnce(PX.muxIndex), 10000, "Proxy transport script did not load");
-    await withTimeout(loadScriptOnce(PX.coreAll), 10000, "Proxy controller script did not load");
+    await withTimeout(migrateEngineOnce(), 20000, 'Proxy storage update timed out');
+    await withTimeout(loadScriptOnce(PX.muxIndex), 10000, 'Proxy transport script did not load');
+    await withTimeout(loadScriptOnce(PX.coreAll), 10000, 'Proxy controller script did not load');
     await initBrowser();
-    if (!(window as any).__pz) {
-      throw new Error("engine unavailable");
-    }
-  })().catch((err) => {
-    ensurePromise = null;
-    window.__browserInitialized = false;
-    throw err;
-  });
-
+  })().catch((error) => { ensurePromise = null; throw error; });
   return ensurePromise;
 }
 
-export async function initBrowser() {
-  if ((window as any).__pz) return;
-  if (window.__browserInitialized) return;
-  window.__browserInitialized = true;
-
-  await withTimeout(migrateEngineOnce(), 20000, "Proxy storage update timed out");
-
-  try {
-    await waitFor(() => typeof loadCtrlFactory() === "function", 8000);
-  } catch (err) {
-    window.__browserInitialized = false;
-    throw err;
-  }
-
-  try {
-    localStorage.setItem(muxPathKey(), PX.muxWorker);
-  } catch {}
-
-  const { broken, version } = await withTimeout(openDbCheck(), 5000, "Proxy storage could not open");
-  if (broken || version !== 1) {
-    await clearServiceWorkers();
-    await withTimeout(repairPxStore(), 15000, "Proxy storage could not be repaired");
-  }
-
-  try {
+export async function initBrowser(): Promise<void> {
+  if (window.__pz) return;
+  if (initializationPromise) return initializationPromise;
+  initializationPromise = (async () => {
+    await waitForProxyArm();
+    await withTimeout(migrateEngineOnce(), 20000, 'Proxy storage update timed out');
+    const factory = loadCtrlFactory();
+    if (typeof factory !== 'function') throw new Error('Proxy controller is unavailable');
+    const Controller = factory()[ctrlClassName()];
+    if (!Controller) throw new Error('Proxy controller is unavailable');
+    const controller = new Controller({
+      prefix: PX.prefix,
+      files: { wasm: PX.coreWasm, all: PX.coreAll, sync: PX.coreSync },
+    });
+    // Follow the official demo: persist real controller config before installing
+    // the canonical worker, then initialize the same-origin libcurl transport.
+    await withTimeout(controller.init(), 10000, 'Proxy controller initialization timed out');
     await registerSw();
-    await withTimeout(setupMux(), 15000, "Proxy transport could not start");
-  } catch (error) {
+    await withTimeout(setupMux(), 15000, 'Proxy transport could not start');
+    window.__pz = controller;
+    window.__browserInitialized = true;
+  })().catch((error) => {
+    initializationPromise = null;
     window.__browserInitialized = false;
     throw error;
-  }
-
-  const factory = loadCtrlFactory();
-  const loaded = factory();
-  const Ctrl = loaded[ctrlClassName()];
-  if (!Ctrl) {
-    window.__browserInitialized = false;
-    throw new Error("Proxy controller is unavailable");
-  }
-
-  let controller: any = null;
-  let inited = false;
-  let initError: unknown = new Error("Proxy controller could not initialize");
-
-  for (let attempt = 0; attempt < 4 && !inited; attempt++) {
-    try {
-      if (attempt > 0) {
-        await clearServiceWorkers();
-        await withTimeout(repairPxStore(), 15000, "Proxy storage could not be repaired");
-        await registerSw();
-        await withTimeout(setupMux(), 15000, "Proxy transport could not restart");
-      }
-      controller = new Ctrl({
-        prefix: PX.prefix,
-        files: {
-          wasm: PX.coreWasm,
-          all: PX.coreAll,
-          sync: PX.coreSync,
-        },
-        flags: {
-          sourcemaps: false,
-          rewriterLogs: false,
-          captureErrors: true,
-        },
-        codec: {
-          encode: urlCodecEncode,
-          decode: urlCodecDecode,
-        },
-      });
-      await withTimeout(controller.init(), 10000, "Proxy controller initialization timed out");
-      inited = true;
-    } catch (error) {
-      initError = error;
-      await sleep(200);
-    }
-  }
-
-  if (!inited || !controller) {
-    window.__browserInitialized = false;
-    throw initError;
-  }
-
-  (window as any).__pz = controller;
-
-  try {
-    const msg: Record<string, string> = {};
-    msg[cfgMsgType()] = "loadConfig";
-    navigator.serviceWorker.controller?.postMessage(msg);
-  } catch {}
-}
-
-function waitFor(condition: () => boolean, timeoutMs: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (condition()) return resolve();
-    const start = Date.now();
-    const interval = setInterval(() => {
-      if (condition()) {
-        clearInterval(interval);
-        resolve();
-      } else if (Date.now() - start > timeoutMs) {
-        clearInterval(interval);
-        reject(new Error(`Timeout waiting for condition after ${timeoutMs}ms`));
-      }
-    }, 50);
   });
+  return initializationPromise;
 }

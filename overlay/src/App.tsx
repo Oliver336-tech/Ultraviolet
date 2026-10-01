@@ -7,8 +7,6 @@ import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import ProfilePage from "./components/ProfilePage";
 import SharedAiPage from "./components/SharedAiPage";
-import SvgAccessGate from "./components/SvgAccessGate";
-import LegalReagreeModal from "./components/LegalReagreeModal";
 import ActivityCaptchaModal from "./components/ActivityCaptchaModal";
 import { isSvgShell } from "./lib/siteOrigin";
 
@@ -27,16 +25,13 @@ const App = () => (
       <Sonner />
       <a href="/edition" target="_blank" rel="noopener noreferrer" style={{ position: 'fixed', bottom: 4, left: 8, zIndex: 60, fontSize: 10, color: '#94a3b8' }}>Ad-free edition · Source & credits</a>
       <Router>
-        <SvgAccessGate>
-          <LegalReagreeModal />
-          <ActivityCaptchaModal />
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/user/:username" element={<PublicProfileRoute />} />
-            <Route path="/share/ai/:token" element={<SharedAiPage />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </SvgAccessGate>
+        <ActivityCaptchaModal />
+        <Routes>
+          <Route path="/" element={<Index />} />
+          <Route path="/user/:username" element={<PublicProfileRoute />} />
+          <Route path="/share/ai/:token" element={<SharedAiPage />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
       </Router>
     </TooltipProvider>
   </QueryClientProvider>

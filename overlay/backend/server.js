@@ -21,7 +21,7 @@ import { applySeoToHtml, isPeteZahHomeHost } from './utils/seo-meta.js';
 import fs, { existsSync } from 'node:fs';
 
 import { createRouteTimingMiddleware } from './utils/route-metrics.js';
-import { createCorsConfig, createSecurityHeaders, createUploadGuard, wrapCrossSiteCookies } from './middleware/http-security.js';
+import { createCorsConfig, createSecurityHeaders, createUploadGuard, wrapCrossSiteCookies, isAllowedWebsocketOrigin } from './middleware/http-security.js';
 import { attachSvgSessionSid, injectSvgSessionCookie } from './utils/svg-session.js';
 import { ddosShield } from './security/ddos-shield.js';
 import { toIPv4, systemState, createGateMiddleware, createMemoryProtection, checkCircuitBreaker, checkSystemPressure, cleanupSecurityMaps, isTrustedWS, adjustPowDifficulty, isKillSwitchUrlExempt, updateIPReputation, getTokenSecret } from './middleware/security.js';
@@ -64,7 +64,7 @@ import { addCommentHandler, getCommentsHandler, deleteCommentHandler, cleanupMal
 import { likeHandler, getLikesHandler } from './api/likes.js';
 import { adminUserActionHandler } from './api/admin-user-action.js';
 import { getAdminUsersHandler, getAdminUserHandler, getAdminUserRevealHandler, getAdminStaffHandler, getBadgeRarityLeaderboardHandler } from './api/admin-users.js';
-import { createIpBanMiddleware } from './middleware/ip-ban.js';
+import { createIpBanMiddleware, isIpBanned } from './middleware/ip-ban.js';
 import { getChangelogHandler, createChangelogHandler, deleteChangelogHandler } from './api/changelog.js';
 import { listNotificationsHandler, markNotificationsReadHandler } from './api/notifications.js';
 import { getFeedbackHandler, createFeedbackHandler, deleteFeedbackHandler } from './api/feedback.js';
@@ -331,6 +331,15 @@ app.use('/api/', (req, res, next) => {
 });
 app.use(PX.edge, apiLimiter);
 
+// Serve distributions generated from the official, locked packages. The
+// Scramjet copy also includes the documented module-identity compatibility hook.
+function engineCache(res) {
+  res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+}
+for (const directory of ['scram', 'baremux', 'libcurl']) {
+  app.use(`/${directory}/`, express.static(path.join(__dirname, '../public', directory), { index: false, setHeaders: engineCache }));
+}
+
 app.use((req, res, next) => {
   const p = req.path || '';
   if (PX.blocked.some((b) => p === b.slice(0, -1) || p.startsWith(b))) {
@@ -340,9 +349,6 @@ app.use((req, res, next) => {
   next();
 });
 
-function engineCache(res) {
-  res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
-}
 app.get('/q9vx/ld.bin', (_req, res) => {
   res.setHeader('Content-Type', 'application/wasm');
   res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
@@ -690,6 +696,7 @@ server.on('upgrade', (req, socket, head) => {
     shield.incrementBlocked(ip, 'kill_switch');
     return socket.destroy();
   }
+  if (isIpBanned(ip)) return socket.destroy();
 
   if (url.startsWith('/n/m/') || url.startsWith('/f/g/') || url.startsWith('/!!/') || url.startsWith('/!cover!/')) {
     req.url = toMochiBackendPath(url);
@@ -718,6 +725,7 @@ server.on('upgrade', (req, socket, head) => {
   const isBareUrl = bare.shouldRoute(req) || barePremium.shouldRoute(req);
 
   if (!isWispUrl && !isBareUrl) return socket.destroy();
+  if (isWispUrl && !isAllowedWebsocketOrigin(req)) return socket.destroy();
 
   if (isWispUrl && (systemState.state === 'ATTACK' || shield.forceAttackMode) && !isTrustedWS(req)) {
     shield.incrementBlocked(ip, 'ws_attack_block');
