@@ -72,3 +72,5 @@ Free Render services sleep after inactivity and have shared quotas; free Supabas
 ## Game availability
 
 Drive Mad is excluded from this edition's catalogue because the game redirects this host to its publisher's sitelock page. The publisher's restriction is preserved. Other game fixes retain the original author notices and use pinned asset sources.
+
+Tag's original `media/tagged.webm` is a zero-byte placeholder in the pinned source. This edition serves a short silent Opus WebM at that exact path so the game's audio decoder and tagged-sound handle can finish normally. The missing original tag sound is not restored; the other eight original audio clips are retained.

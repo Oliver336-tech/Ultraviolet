@@ -154,7 +154,7 @@ export function resolveGameAsset(requestPath) {
 // These public SDKs normally request ad networks. Keep the game-facing callbacks
 // so commercial/rewarded break calls finish without displaying advertisements.
 const SDK_SCRIPT = /(?:sdk\.poki\.com|poki-sdk[^/]*\.js|sdk\.crazygames\.com|crazygames-sdk[^/]*\.js|IronSourceRV\.js|cpmstar\.js|ima3\.js|adblockManager\.js)/i;
-export const GAME_SDK_URL = '/storage/ag/sdk/ad-free.js?v=2';
+export const GAME_SDK_URL = '/storage/ag/sdk/ad-free.js?v=3';
 export const AD_FREE_SDK = `(() => {
   if (window.__pzAdFreeSdk) return;
   window.__pzAdFreeSdk = true;
@@ -204,6 +204,11 @@ export const AD_FREE_SDK = `(() => {
   const rewriteAssetUrl = raw => {
     try {
       const url = new URL(String(raw), document.baseURI);
+      if (url.origin === location.origin && /^\\/storage\\/ag\\/(?:arsenic|originals)\\/tag\\/media\\/tagged\\.webm$/.test(url.pathname)) {
+        // Refresh previously cached copies of the source's zero-byte audio.
+        url.searchParams.set('_audio', '1');
+        return url.href;
+      }
       const prefix = '/gh/Collasperz/ragdoll-hit/';
       if (url.protocol === 'https:' && url.hostname === 'cdn.jsdelivr.net' && url.pathname.startsWith(prefix)) {
         // The game's existing/cached Unity loader hardcodes this mutable CDN.
@@ -339,6 +344,14 @@ export function sanitizeGameHtml(input, asset = {}) {
   return bootstrap + output;
 }
 
+// The pinned Tag source's media/tagged.webm is an empty placeholder (git blob
+// e69de29bb2d1d6434b8b29ae775ad8c2e48c5391). Its audio decode rejection breaks
+// the game's tagged-sound handle. Preserve the absent sound as 120ms of valid
+// silent Opus; no original tagged sound is available in the source repository.
+// Generated with FFmpeg: anullsrc=r=48000:cl=mono, -t 0.12 -c:a libopus -b:a 16k
+// -map_metadata -1 -bitexact -f webm. Other game/audio assets are unchanged.
+const TAG_SILENT_AUDIO = Buffer.from('GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQRChYECGFOAZwEAAAAAAAJSEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHGTbuMU6uEElTDZ1OsggEwTbuMU6uEHFO7a1OsggI87AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmoCrXsYMPQkBNgIRMYXZmV0GETGF2ZkSJiEBgAAAAAAAAFlSua+WuAQAAAAAAAFzXgQFzxYgAAAAAAAAAAZyBACK1nIN1bmSIgQCGhkFfT1BVU1aqg2MuoFa7hATEtACDgQLhkZ+BAbWIQOdwAAAAAABiZIEQY6KTT3B1c0hlYWQBATgBgLsAAAAAABJUw2fRc3POY8CLY8WIAAAAAAAAAAFnyJlFo4dFTkNPREVSRIeMTGF2YyBsaWJvcHVzZ8ihRaOIRFVSQVRJT05Eh5MwMDowMDowMC4xMjgwMDAwMDAAH0O2dUCw54EAo5OBAACAeAvkwTbsxY2MSUaZpCawo5WBABWAeAfJcifhROpV8fDA1d3pUmCjloEAKYB4B8l5yMlXwKISI/rvZ/NkwOCjloEAPYB4B8l5yMlXwKISI/rvZ/NkwOCjloEAUYB4B8l5yMlXwKISI/rvZ/NkwOCjloEAZYB4B8l5yMlXwKISI/rvZ/NkwOCgn6GWgQB5AHgHyXnIyVfAohIj+u9n82TA4HWihADN/mAcU7trkbuPs4EAt4r3gQHxggGG8IED', 'base64');
+
 export function createGameAssetsMiddleware({ fetchImpl = globalThis.fetch } = {}) {
   const htmlCache = new Map();
   let htmlCacheBytes = 0;
@@ -414,6 +427,32 @@ export function createGameAssetsMiddleware({ fetchImpl = globalThis.fetch } = {}
     res.setHeader('Cache-Control', type.startsWith('text/html') ? 'no-cache, max-age=0, must-revalidate' : 'public, max-age=86400, stale-while-revalidate=604800');
     res.setHeader('X-Game-Source', GAME_ASSET_SOURCES[asset.source].repository);
     try {
+      if (asset.source === 'petezah' && asset.file === 'tag/media/tagged.webm') {
+        const total = TAG_SILENT_AUDIO.length;
+        let start = 0;
+        let end = total - 1;
+        res.setHeader('Content-Type', 'audio/webm');
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('X-Game-Asset-Repair', 'silent-opus-placeholder');
+        if (req.headers.range) {
+          const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
+          if (!range || (!range[1] && !range[2])) {
+            return res.status(416).setHeader('Content-Range', 'bytes */' + total).end();
+          }
+          if (!range[1]) start = Math.max(0, total - Number(range[2]));
+          else {
+            start = Number(range[1]);
+            end = range[2] ? Math.min(Number(range[2]), end) : end;
+          }
+          if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= total) {
+            return res.status(416).setHeader('Content-Range', 'bytes */' + total).end();
+          }
+          res.status(206).setHeader('Content-Range', 'bytes ' + start + '-' + end + '/' + total);
+        }
+        const body = TAG_SILENT_AUDIO.subarray(start, end + 1);
+        res.setHeader('Content-Length', body.length);
+        return res.end(req.method === 'HEAD' ? undefined : body);
+      }
       if (type.startsWith('text/html')) {
         let body = htmlCache.get(cacheKey)?.body;
         if (body === undefined) {

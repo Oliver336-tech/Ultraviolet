@@ -109,7 +109,8 @@
     "scripts/proxy-worker.test.mjs",
     "src/lib/browserInit.ts",
     "src/test/browser-startup.test.tsx",
-    "src/test/proxy-startup.test.ts"
+    "src/test/proxy-startup.test.ts",
+    "scripts/game-audio.test.mjs"
   ],
   "deleted": [
     "backend/utils/secrets.ts"

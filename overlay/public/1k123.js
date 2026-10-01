@@ -168,9 +168,13 @@ self.addEventListener('fetch', function (event) {
   try {
     var url = new URL(event.request.url);
     var wasmPath = (_engine.config && _engine.config.files && _engine.config.files.wasm) || _base + 'q9vx/ld.bin';
-    // The engine injects this WASM URL as a script. Its fetch handler converts
-    // the binary into self.WASM JavaScript for the proxied page's rewriter.
-    var wasmScript = url.pathname === wasmPath && event.request.destination === 'script';
+    // The engine injects this WASM URL as JavaScript. Module imports inside a
+    // worker retain that worker's destination, rather than using "script".
+    // Keep raw WASM fetches (the empty destination) as binary responses.
+    var destination = event.request.destination;
+    var wasmScript = url.pathname === wasmPath && (
+      destination === 'script' || destination === 'worker' || destination === 'sharedworker'
+    );
     if (url.origin !== self.location.origin || (url.pathname.indexOf(_pref) !== 0 && !wasmScript)) {
       return;
     }

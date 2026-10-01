@@ -156,13 +156,15 @@ test('actual bundled worker hydrates core config and WASM after a controller con
   assert.match(html, /afsd123k2\//);
 });
 
-test('injected WASM script receives JavaScript while raw binary requests bypass the worker', async (t) => {
+test('injected WASM page and module-worker imports receive JavaScript while binary fetches bypass', async (t) => {
   const runtime = await createRuntime(t);
   await runtime.sendConfig();
-  const response = await runtime.request(config.files.wasm, 'script');
-  assert.ok(response, 'the injected script must be routed through the engine');
-  assert.equal(response.headers.get('content-type'), 'text/javascript');
-  const script = await response.text();
-  assert.match(script, /self\.WASM = '/);
+  for (const destination of ['script', 'worker', 'sharedworker']) {
+    const response = await runtime.request(config.files.wasm, destination);
+    assert.ok(response, destination + ' bootstrap must be routed through the engine');
+    assert.equal(response.headers.get('content-type'), 'text/javascript');
+    const script = await response.text();
+    assert.match(script, /self\.WASM = '/);
+  }
   assert.equal(await runtime.request(config.files.wasm, ''), undefined);
 });
